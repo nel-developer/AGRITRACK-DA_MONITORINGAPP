@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../routes/app_routes.dart';
@@ -23,12 +24,11 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
-
   // ── Timing ────────────────────────────────────────────────────────
-  static const Duration _kTotal      = Duration(milliseconds: 3200);
-  static const Duration _kFadeIn     = Duration(milliseconds: 800);
-  static const Duration _kLogoDelay  = Duration(milliseconds: 200);
-  static const Duration _kBrandDelay = Duration(milliseconds: 650);
+  static const Duration _kTotal = Duration(milliseconds: 900);
+  static const Duration _kFadeIn = Duration(milliseconds: 800);
+  static const Duration _kLogoDelay = Duration(milliseconds: 200);
+  static const Duration _kBrandDelay = Duration(milliseconds: 420);
 
   // ── Controllers ───────────────────────────────────────────────────
   late final AnimationController _logoCtrl;
@@ -39,6 +39,7 @@ class _SplashScreenState extends State<SplashScreen>
   late final Animation<double> _logoScale;
   late final Animation<double> _brandFade;
   late final Animation<Offset> _brandSlide;
+  bool _hasNavigated = false;
 
   @override
   void initState() {
@@ -46,22 +47,23 @@ class _SplashScreenState extends State<SplashScreen>
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _initAnimations();
     _startSequence();
+    _startFailSafeNavigation();
   }
 
   void _initAnimations() {
     // Logo — fade + scale up from 72%
-    _logoCtrl  = AnimationController(vsync: this, duration: _kFadeIn);
-    _logoFade  = CurvedAnimation(parent: _logoCtrl, curve: Curves.easeIn);
+    _logoCtrl = AnimationController(vsync: this, duration: _kFadeIn);
+    _logoFade = CurvedAnimation(parent: _logoCtrl, curve: Curves.easeIn);
     _logoScale = Tween<double>(begin: 0.72, end: 1.0).animate(
       CurvedAnimation(parent: _logoCtrl, curve: Curves.easeOutBack),
     );
 
     // Brand — fade + slide up
-    _brandCtrl  = AnimationController(vsync: this, duration: _kFadeIn);
-    _brandFade  = CurvedAnimation(parent: _brandCtrl, curve: Curves.easeIn);
+    _brandCtrl = AnimationController(vsync: this, duration: _kFadeIn);
+    _brandFade = CurvedAnimation(parent: _brandCtrl, curve: Curves.easeIn);
     _brandSlide = Tween<Offset>(
       begin: const Offset(0, 0.35),
-      end:   Offset.zero,
+      end: Offset.zero,
     ).animate(CurvedAnimation(parent: _brandCtrl, curve: Curves.easeOutCubic));
   }
 
@@ -79,17 +81,35 @@ class _SplashScreenState extends State<SplashScreen>
     _navigateNext();
   }
 
-  void _navigateNext() {
-    // TODO: replace with real auth-token check
-    // final prefs = await SharedPreferences.getInstance();
-    // final token = prefs.getString('auth_token');
-    // final route = (token != null && token.isNotEmpty)
-    //     ? AppRoutes.home
-    //     : AppRoutes.login;
-    const route = AppRoutes.login;
+  void _startFailSafeNavigation() {
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted || _hasNavigated) return;
+      _navigateNext(forceLoginFallback: true);
+    });
+  }
+
+  Future<void> _navigateNext({bool forceLoginFallback = false}) async {
+    if (!mounted || _hasNavigated) return;
+
+    var route = AppRoutes.login;
+
+    // Always wait for Firebase Auth to restore the previous session state
+    // This ensures users don't get logged out on every app restart
+    try {
+      final authUser = await FirebaseAuth.instance
+          .authStateChanges()
+          .first
+          .timeout(const Duration(seconds: 3), onTimeout: () => null);
+      route = authUser != null ? AppRoutes.home : AppRoutes.login;
+    } catch (_) {
+      route = AppRoutes.login;
+    }
+
+    if (!mounted || _hasNavigated) return;
+    _hasNavigated = true;
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    Navigator.of(context).pushReplacementNamed(route);
+    Navigator.of(context).pushNamedAndRemoveUntil(route, (r) => false);
   }
 
   @override
@@ -150,9 +170,9 @@ class _SplashScreenState extends State<SplashScreen>
         scale: _logoScale,
         child: Image.asset(
           'assets/images/da_logo.png',
-          width:  r.splashDaLogoSize,
+          width: r.splashDaLogoSize,
           height: r.splashDaLogoSize,
-          fit:    BoxFit.contain,
+          fit: BoxFit.contain,
           errorBuilder: (_, __, ___) => _PlaceholderLogo(r: r),
         ),
       ),
@@ -171,7 +191,7 @@ class _SplashScreenState extends State<SplashScreen>
             Text(
               'AGRI-TRACK',
               style: DATextStyles.brandDisplay(
-                fontSize:      r.splashBrandFontSize,
+                fontSize: r.splashBrandFontSize,
                 letterSpacing: r.scale(6),
               ),
             ),
@@ -182,8 +202,8 @@ class _SplashScreenState extends State<SplashScreen>
               'DEPARTMENT OF AGRICULTURE',
               textAlign: TextAlign.center,
               style: DATextStyles.labelSm(
-                fontSize:      r.splashSubFontSize,
-                color:         Colors.white.withOpacity(0.60),
+                fontSize: r.splashSubFontSize,
+                color: Colors.white.withOpacity(0.60),
                 letterSpacing: r.scale(3),
               ),
             ),
@@ -194,8 +214,8 @@ class _SplashScreenState extends State<SplashScreen>
               'CALABARZON  ·  SAAD PROGRAM',
               textAlign: TextAlign.center,
               style: DATextStyles.labelSm(
-                fontSize:      r.splashSubFontSize,
-                color:         Colors.white.withOpacity(0.42),
+                fontSize: r.splashSubFontSize,
+                color: Colors.white.withOpacity(0.42),
                 letterSpacing: r.scale(2.5),
               ),
             ),
@@ -216,8 +236,7 @@ class _SplashBg extends StatelessWidget {
     return Image.asset(
       'assets/images/splash_bg.png',
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) =>
-          Container(color: DAColors.greenDark),
+      errorBuilder: (_, __, ___) => Container(color: DAColors.greenDark),
     );
   }
 }
@@ -228,8 +247,8 @@ class _GradientScrim extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin:  Alignment.topCenter,
-          end:    Alignment.bottomCenter,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
             DAColors.greenDark.withOpacity(0.84),
             DAColors.greenMid.withOpacity(0.68),
@@ -250,15 +269,15 @@ class _PlaceholderLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width:  r.splashDaLogoSize,
+      width: r.splashDaLogoSize,
       height: r.splashDaLogoSize,
       alignment: Alignment.center,
       child: Text(
         'DA',
         style: TextStyle(
-          fontSize:   r.splashDaLogoSize * 0.28,
+          fontSize: r.splashDaLogoSize * 0.28,
           fontWeight: FontWeight.w700,
-          color:      DAColors.white,
+          color: DAColors.white,
         ),
       ),
     );

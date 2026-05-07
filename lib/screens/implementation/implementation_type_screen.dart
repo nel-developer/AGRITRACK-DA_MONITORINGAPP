@@ -5,15 +5,14 @@ import '../../theme/da_colors.dart';
 import '../../routes/app_routes.dart';
 import '../livestock/livestock_step_wrapper.dart';
 import '../crop/crop_step_wrapper.dart';
-import '../auth/login_screen.dart' show mockUserRole;
 
 // ── Implementation type model ─────────────────────────────────────
 class _ImplType {
-  final String   key;
-  final String   title;
-  final String   description;
+  final String key;
+  final String title;
+  final String description;
   final IconData icon;
-  final Color    color;
+  final Color color;
 
   const _ImplType({
     required this.key,
@@ -26,25 +25,28 @@ class _ImplType {
 
 const _implTypes = [
   _ImplType(
-    key:         'collective',
-    title:       'Collective',
-    description: 'Monitor the organization as one group. One monitoring form is filled for the entire organization.',
-    icon:        Icons.groups_rounded,
-    color:       DAColors.greenMid,
+    key: 'collective',
+    title: 'Collective',
+    description:
+        'Monitor the organization as one group. One monitoring form is filled for the entire organization.',
+    icon: Icons.groups_rounded,
+    color: DAColors.greenMid,
   ),
   _ImplType(
-    key:         'individual',
-    title:       'Individual',
-    description: 'Each member will have their own monitoring record and individual monitoring form.',
-    icon:        Icons.person_rounded,
-    color:       Color(0xFF1565C0),
+    key: 'individual',
+    title: 'Individual',
+    description:
+        'Each member will have their own monitoring record and individual monitoring form.',
+    icon: Icons.person_rounded,
+    color: Color(0xFF1565C0),
   ),
   _ImplType(
-    key:         'hybrid',
-    title:       'Hybrid',
-    description: 'Group monitoring plus individual member monitoring. Includes both a group form and per-member forms.',
-    icon:        Icons.people_alt_rounded,
-    color:       Color(0xFFE65100),
+    key: 'hybrid',
+    title: 'Hybrid',
+    description:
+        'Group monitoring plus individual member monitoring. Includes both a group form and per-member forms.',
+    icon: Icons.people_alt_rounded,
+    color: Color(0xFFE65100),
   ),
 ];
 
@@ -64,18 +66,18 @@ class ImplementationTypeScreen extends StatefulWidget {
 class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
   String? _selected;
 
-  bool get _isProfiler => mockUserRole == 'profiler';
-
   String get _productionLabel {
     switch (widget.productionType.toLowerCase()) {
-      case 'livestock': return 'Livestock Production';
-      case 'poultry':   return 'Poultry Production';
-      default:          return 'Crop Production';
+      case 'livestock':
+        return 'Livestock Production';
+      case 'poultry':
+        return 'Poultry Production';
+      default:
+        return 'Crop Production';
     }
   }
 
   void _onSelect(String key) {
-    if (!_isProfiler) return;
     setState(() => _selected = key);
 
     Future.delayed(const Duration(milliseconds: 180), () {
@@ -109,17 +111,17 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final mq      = MediaQuery.of(context);
+    final mq = MediaQuery.of(context);
     final screenH = mq.size.height;
     final screenW = mq.size.width;
-    final topPad  = mq.padding.top;
-    final botPad  = mq.padding.bottom;
-    final hPad    = screenW * 0.055;
-    final imageH  = (screenH * 0.28).clamp(200.0, 280.0);
+    final topPad = mq.padding.top;
+    final botPad = mq.padding.bottom;
+    final hPad = screenW * 0.055;
+    final imageH = (screenH * 0.28).clamp(200.0, 280.0);
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor:          Colors.transparent,
+      statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
     ));
 
@@ -129,7 +131,6 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-
           // ── Hero header ────────────────────────────────────────
           SizedBox(
             height: imageH + topPad,
@@ -137,15 +138,14 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
               fit: StackFit.expand,
               children: [
                 Image.asset('assets/images/splash_bg.png',
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) =>
-                      Container(color: DAColors.greenDark)),
-
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        Container(color: DAColors.greenDark)),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin:  Alignment.topCenter,
-                      end:    Alignment.bottomCenter,
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
                       colors: [
                         DAColors.greenDark.withOpacity(0.92),
                         DAColors.greenMid.withOpacity(0.85),
@@ -156,17 +156,16 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
                     ),
                   ),
                 ),
-
                 Padding(
                   padding: EdgeInsets.fromLTRB(hPad, topPad + 12, hPad, 24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-
                       GestureDetector(
                         onTap: () => Navigator.pop(context),
                         child: Container(
-                          width: 38, height: 38,
+                          width: 38,
+                          height: 38,
                           decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.20),
                               shape: BoxShape.circle),
@@ -174,38 +173,37 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
                               color: Colors.white, size: 20),
                         ),
                       ),
-
                       const Spacer(),
-
-                      Text('CHOOSE\nIMPLEMENTATION TYPE',
+                      Text(
+                        'CHOOSE\nIMPLEMENTATION TYPE',
                         style: GoogleFonts.bebasNeue(
-                          fontSize:      (screenW * 0.078).clamp(24.0, 38.0),
-                          color:         Colors.white,
+                          fontSize: (screenW * 0.078).clamp(24.0, 38.0),
+                          color: Colors.white,
                           letterSpacing: 2,
-                          height:        1.05,
+                          height: 1.05,
                         ),
                       ),
-
                       const SizedBox(height: 8),
-
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.18),
-                          borderRadius: BorderRadius.circular(50),
-                          border: Border.all(color: Colors.white.withOpacity(0.35))),
+                            color: Colors.white.withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(50),
+                            border: Border.all(
+                                color: Colors.white.withOpacity(0.35))),
                         child: Text(_productionLabel,
-                          style: GoogleFonts.poppins(
-                              fontSize: 12, fontWeight: FontWeight.w600,
-                              color: Colors.white)),
+                            style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white)),
                       ),
-
                       const SizedBox(height: 6),
-
                       Text('Select how monitoring will be conducted.',
-                        style: GoogleFonts.poppins(
-                            fontSize: 12, fontStyle: FontStyle.italic,
-                            color: Colors.white.withOpacity(0.80))),
+                          style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.white.withOpacity(0.80))),
                     ],
                   ),
                 ),
@@ -224,53 +222,22 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
                       top: Radius.circular((screenW * 0.07).clamp(20.0, 32.0))),
                 ),
                 child: Stack(children: [
-
                   ListView.separated(
                     padding: EdgeInsets.fromLTRB(hPad, 24, hPad, botPad + 24),
-                    itemCount:        _implTypes.length,
-                    separatorBuilder: (_, __) => SizedBox(height: screenH * 0.018),
+                    itemCount: _implTypes.length,
+                    separatorBuilder: (_, __) =>
+                        SizedBox(height: screenH * 0.018),
                     itemBuilder: (ctx, i) {
                       final type = _implTypes[i];
                       return _ImplCard(
-                        type:       type,
+                        type: type,
                         isSelected: _selected == type.key,
-                        screenW:    screenW,
-                        screenH:    screenH,
-                        onTap:      _isProfiler ? () => _onSelect(type.key) : null,
+                        screenW: screenW,
+                        screenH: screenH,
+                        onTap: () => _onSelect(type.key),
                       );
                     },
                   ),
-
-                  // Role lock overlay
-                  if (!_isProfiler)
-                    Positioned.fill(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.vertical(
-                            top: Radius.circular(
-                                (screenW * 0.07).clamp(20.0, 32.0))),
-                        child: Container(
-                          color: Colors.black.withOpacity(0.62),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.lock_rounded,
-                                  color: Colors.white, size: 48),
-                              const SizedBox(height: 16),
-                              Padding(
-                                padding: EdgeInsets.symmetric(
-                                    horizontal: hPad * 2),
-                                child: Text(
-                                  'Monitoring forms are only\navailable for Profilers.',
-                                  textAlign: TextAlign.center,
-                                  style: GoogleFonts.poppins(
-                                      fontSize: 15, fontWeight: FontWeight.w500,
-                                      color: Colors.white)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
                 ]),
               ),
             ),
@@ -293,10 +260,10 @@ class _ImplCard extends StatelessWidget {
     this.onTap,
   });
 
-  final _ImplType     type;
-  final bool          isSelected;
-  final double        screenW;
-  final double        screenH;
+  final _ImplType type;
+  final bool isSelected;
+  final double screenW;
+  final double screenH;
   final VoidCallback? onTap;
 
   @override
@@ -307,19 +274,19 @@ class _ImplCard extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        curve:    Curves.easeOut,
+        curve: Curves.easeOut,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isSelected ? type.color : Colors.transparent, width: 2.5),
+              color: isSelected ? type.color : Colors.transparent, width: 2.5),
           boxShadow: [
             BoxShadow(
-              color:      isSelected
+              color: isSelected
                   ? type.color.withOpacity(0.18)
                   : Colors.black.withOpacity(0.06),
               blurRadius: isSelected ? 16 : 8,
-              offset:     const Offset(0, 3),
+              offset: const Offset(0, 3),
             ),
           ],
         ),
@@ -328,62 +295,60 @@ class _ImplCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
               Container(
-                width:  (screenW * 0.14).clamp(52.0, 64.0),
+                width: (screenW * 0.14).clamp(52.0, 64.0),
                 height: (screenW * 0.14).clamp(52.0, 64.0),
                 decoration: BoxDecoration(
-                  color: type.color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(14)),
-                child: Icon(type.icon, color: type.color,
+                    color: type.color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(14)),
+                child: Icon(type.icon,
+                    color: type.color,
                     size: (screenW * 0.075).clamp(28.0, 36.0)),
               ),
-
               const SizedBox(width: 16),
-
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
                     Row(children: [
-                      Expanded(child: Text(type.title,
-                        style: GoogleFonts.bebasNeue(
-                          fontSize:      (screenW * 0.058).clamp(20.0, 28.0),
-                          color:         DAColors.textDark,
-                          letterSpacing: 1.5))),
+                      Expanded(
+                          child: Text(type.title,
+                              style: GoogleFonts.bebasNeue(
+                                  fontSize: (screenW * 0.058).clamp(20.0, 28.0),
+                                  color: DAColors.textDark,
+                                  letterSpacing: 1.5))),
                       if (isSelected)
                         Container(
-                          width: 24, height: 24,
-                          decoration: BoxDecoration(
-                              color: type.color, shape: BoxShape.circle),
-                          child: const Icon(Icons.check_rounded,
-                              color: Colors.white, size: 16)),
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                                color: type.color, shape: BoxShape.circle),
+                            child: const Icon(Icons.check_rounded,
+                                color: Colors.white, size: 16)),
                     ]),
-
                     const SizedBox(height: 4),
-
                     Text(type.description,
-                      style: GoogleFonts.poppins(
-                          fontSize: (screenW * 0.032).clamp(11.0, 13.0),
-                          color: DAColors.textMuted, height: 1.5)),
-
+                        style: GoogleFonts.poppins(
+                            fontSize: (screenW * 0.032).clamp(11.0, 13.0),
+                            color: DAColors.textMuted,
+                            height: 1.5)),
                     const SizedBox(height: 12),
-
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 4),
                       decoration: BoxDecoration(
                           color: type.color.withOpacity(0.10),
                           borderRadius: BorderRadius.circular(50)),
                       child: Text(
-                        type.key == 'collective'
-                            ? 'One group form'
-                            : type.key == 'individual'
-                                ? 'Per member forms'
-                                : 'Group + member forms',
-                        style: GoogleFonts.poppins(
-                            fontSize: 10, fontWeight: FontWeight.w600,
-                            color: type.color)),
+                          type.key == 'collective'
+                              ? 'One group form'
+                              : type.key == 'individual'
+                                  ? 'Per member forms'
+                                  : 'Group + member forms',
+                          style: GoogleFonts.poppins(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: type.color)),
                     ),
                   ],
                 ),

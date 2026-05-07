@@ -2,14 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../routes/app_routes.dart';
+import '../../services/user_session_service.dart';
 import '../../theme/da_colors.dart';
 import '../../theme/da_text_styles.dart';
 import '../../theme/responsive_helper.dart';
-
-// ── TODO: Replace with real session/auth service ──────────────────
-// This is a temporary global for dev testing only.
-// Remove once real auth is implemented.
-String mockUserRole = 'profiler';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,11 +15,11 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _formKey      = GlobalKey<FormState>();
-  final _emailCtrl    = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  bool  _obscurePass  = true;
-  bool  _isLoading    = false;
+  bool _obscurePass = true;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -36,16 +32,54 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 1500));
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    Navigator.of(context).pushReplacementNamed(AppRoutes.home);
+    try {
+      await UserSessionService.instance.signInWithEmailAndPassword(
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(AppRoutes.home);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _errorMessage(error),
+            style: GoogleFonts.poppins(fontSize: 13),
+          ),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
   }
 
-  // Dev shortcut — login directly as a role without filling the form
-  void _devLoginAs(String role) {
-    mockUserRole = role;
-    Navigator.of(context).pushReplacementNamed(AppRoutes.home);
+  String _errorMessage(Object error) {
+    final message = error.toString().toLowerCase();
+    if (message.contains('user-not-found')) return 'Account not found.';
+    if (message.contains('wrong-password') ||
+        message.contains('invalid-credential')) {
+      return 'Invalid email or password.';
+    }
+    if (message.contains('account-not-approved')) {
+      return 'Your account is still pending admin approval.';
+    }
+    if (message.contains('profile-not-found')) {
+      return 'Account profile not found. Please contact admin.';
+    }
+    if (message.contains('permission-denied')) {
+      return 'Login succeeded but account profile access is restricted.';
+    }
+    if (message.contains('role-not-configured')) {
+      return 'Account has no role yet. Please contact admin.';
+    }
+    if (message.contains('network-request-failed')) {
+      return 'Network error. Please check your connection.';
+    }
+    return 'Login failed. Please try again.';
   }
 
   void _onForgotPassword() =>
@@ -57,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor:          Colors.transparent,
+      statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
     ));
 
@@ -79,11 +113,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ── Image block ───────────────────────────────────────────────────
   Widget _buildImageBlock(ResponsiveHelper r) {
-    final imageH   = r.screenW * (563 / 938);
+    final imageH = r.screenW * (563 / 938);
     final logoSize = (imageH * 0.38).clamp(56.0, 110.0);
 
     return SizedBox(
-      width:  r.screenW,
+      width: r.screenW,
       height: imageH,
       child: Stack(
         fit: StackFit.expand,
@@ -91,14 +125,13 @@ class _LoginScreenState extends State<LoginScreen> {
           Image.asset(
             'assets/images/auth_bg.png',
             fit: BoxFit.fill,
-            errorBuilder: (_, __, ___) =>
-                Container(color: DAColors.greenDark),
+            errorBuilder: (_, __, ___) => Container(color: DAColors.greenDark),
           ),
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin:  Alignment.topCenter,
-                end:    Alignment.bottomCenter,
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
                 colors: [
                   DAColors.greenDark.withOpacity(0.82),
                   DAColors.greenMid.withOpacity(0.72),
@@ -118,17 +151,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   Image.asset(
                     'assets/images/da_logo.png',
-                    width:  logoSize,
+                    width: logoSize,
                     height: logoSize,
-                    fit:    BoxFit.contain,
-                    errorBuilder: (_, __, ___) =>
-                        _FallbackLogo(size: logoSize),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => _FallbackLogo(size: logoSize),
                   ),
                   SizedBox(height: r.scale(6)),
                   Text(
                     'AGRI-TRACK',
                     style: DATextStyles.brandDisplay(
-                      fontSize:      r.scaleFont(44),
+                      fontSize: r.scaleFont(44),
                       letterSpacing: r.scale(3),
                     ),
                   ),
@@ -162,13 +194,12 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-
               Text(
                 'Login',
                 style: GoogleFonts.poppins(
-                  fontSize:   r.scaleFont(30),
+                  fontSize: r.scaleFont(30),
                   fontWeight: FontWeight.w800,
-                  color:      DAColors.greenDark,
+                  color: DAColors.greenDark,
                 ),
               ),
 
@@ -177,7 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Text(
                 'Sign in to continue',
                 style: DATextStyles.bodyMd(
-                  color:    DAColors.textMid,
+                  color: DAColors.textMid,
                   fontSize: r.scaleFont(13),
                 ),
               ),
@@ -188,13 +219,13 @@ class _LoginScreenState extends State<LoginScreen> {
               _FieldLabel(text: 'Email', r: r),
               SizedBox(height: r.scale(6)),
               _AuthTextField(
-                controller:   _emailCtrl,
-                hint:         'Enter Email Address',
+                controller: _emailCtrl,
+                hint: 'Enter Email Address',
                 keyboardType: TextInputType.emailAddress,
-                r:            r,
+                r: r,
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) return 'Email is required';
-                  if (!v.contains('@'))              return 'Enter a valid email';
+                  if (!v.contains('@')) return 'Enter a valid email';
                   return null;
                 },
               ),
@@ -205,24 +236,23 @@ class _LoginScreenState extends State<LoginScreen> {
               _FieldLabel(text: 'Password', r: r),
               SizedBox(height: r.scale(6)),
               _AuthTextField(
-                controller:  _passwordCtrl,
-                hint:        'Enter Password',
+                controller: _passwordCtrl,
+                hint: 'Enter Password',
                 obscureText: _obscurePass,
-                r:           r,
+                r: r,
                 suffixIcon: IconButton(
                   icon: Icon(
                     _obscurePass
                         ? Icons.visibility_off_outlined
                         : Icons.visibility_outlined,
                     color: DAColors.textMuted,
-                    size:  r.scale(22),
+                    size: r.scale(22),
                   ),
-                  onPressed: () =>
-                      setState(() => _obscurePass = !_obscurePass),
+                  onPressed: () => setState(() => _obscurePass = !_obscurePass),
                 ),
                 validator: (v) {
                   if (v == null || v.isEmpty) return 'Password is required';
-                  if (v.length < 6)           return 'Minimum 6 characters';
+                  if (v.length < 6) return 'Minimum 6 characters';
                   return null;
                 },
               ),
@@ -240,72 +270,26 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Text(
                     'Forgot Password',
                     style: GoogleFonts.poppins(
-                      fontSize:   r.scaleFont(13),
+                      fontSize: r.scaleFont(13),
                       fontWeight: FontWeight.w500,
-                      color:      DAColors.greenMid,
+                      color: DAColors.greenMid,
                     ),
                   ),
                 ),
               ),
 
-              // ── DEV ONLY: Quick role login buttons ───────────────
-              SizedBox(height: r.scale(24)),
+              SizedBox(height: r.scale(10)),
 
-              Row(
-                children: [
-                  const Expanded(child: Divider(color: DAColors.border)),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: r.scale(10)),
-                    child: Text(
-                      'DEV LOGIN',
-                      style: GoogleFonts.poppins(
-                        fontSize:      r.scaleFont(9),
-                        fontWeight:    FontWeight.w600,
-                        color:         DAColors.textMuted,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                  ),
-                  const Expanded(child: Divider(color: DAColors.border)),
-                ],
+              Text(
+                'You stay signed in on this device until you log out.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.poppins(
+                  fontSize: r.scaleFont(11),
+                  fontWeight: FontWeight.w400,
+                  color: DAColors.textMuted,
+                  fontStyle: FontStyle.italic,
+                ),
               ),
-
-              SizedBox(height: r.scale(12)),
-
-              Row(
-                children: [
-                  // Profiler
-                  Expanded(
-                    child: _DevRoleButton(
-                      label:  'Profiler',
-                      color:  DAColors.greenMid,
-                      onTap:  () => _devLoginAs('profiler'),
-                      r:      r,
-                    ),
-                  ),
-                  SizedBox(width: r.scale(8)),
-                  // Moderator
-                  Expanded(
-                    child: _DevRoleButton(
-                      label:  'Moderator',
-                      color:  DAColors.amber,
-                      onTap:  () => _devLoginAs('moderator'),
-                      r:      r,
-                    ),
-                  ),
-                  SizedBox(width: r.scale(8)),
-                  // Admin
-                  Expanded(
-                    child: _DevRoleButton(
-                      label:  'Admin',
-                      color:  const Color(0xFF1565C0),
-                      onTap:  () => _devLoginAs('admin'),
-                      r:      r,
-                    ),
-                  ),
-                ],
-              ),
-              // ── END DEV ──────────────────────────────────────────
             ],
           ),
         ),
@@ -320,7 +304,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
 class _FieldLabel extends StatelessWidget {
   const _FieldLabel({required this.text, required this.r});
-  final String           text;
+  final String text;
   final ResponsiveHelper r;
 
   @override
@@ -330,9 +314,9 @@ class _FieldLabel extends StatelessWidget {
       child: Text(
         text,
         style: GoogleFonts.poppins(
-          fontSize:   r.scaleFont(14),
+          fontSize: r.scaleFont(14),
           fontWeight: FontWeight.w600,
-          color:      DAColors.textDark,
+          color: DAColors.textDark,
         ),
       ),
     );
@@ -344,57 +328,57 @@ class _AuthTextField extends StatelessWidget {
     required this.controller,
     required this.hint,
     required this.r,
-    this.obscureText  = false,
+    this.obscureText = false,
     this.keyboardType = TextInputType.text,
     this.suffixIcon,
     this.validator,
   });
 
-  final TextEditingController      controller;
-  final String                     hint;
-  final ResponsiveHelper           r;
-  final bool                       obscureText;
-  final TextInputType              keyboardType;
-  final Widget?                    suffixIcon;
+  final TextEditingController controller;
+  final String hint;
+  final ResponsiveHelper r;
+  final bool obscureText;
+  final TextInputType keyboardType;
+  final Widget? suffixIcon;
   final String? Function(String?)? validator;
 
   @override
   Widget build(BuildContext context) {
     return TextFormField(
-      controller:   controller,
-      obscureText:  obscureText,
+      controller: controller,
+      obscureText: obscureText,
       keyboardType: keyboardType,
-      style:        DATextStyles.fieldValue(fontSize: r.scaleFont(14)),
-      validator:    validator,
+      style: DATextStyles.fieldValue(fontSize: r.scaleFont(14)),
+      validator: validator,
       decoration: InputDecoration(
-        hintText:   hint,
-        hintStyle:  DATextStyles.fieldHint(fontSize: r.scaleFont(14)),
+        hintText: hint,
+        hintStyle: DATextStyles.fieldHint(fontSize: r.scaleFont(14)),
         suffixIcon: suffixIcon,
-        filled:     true,
-        fillColor:  DAColors.white,
+        filled: true,
+        fillColor: DAColors.white,
         contentPadding: EdgeInsets.symmetric(
           horizontal: r.scale(18),
-          vertical:   r.scale(16),
+          vertical: r.scale(16),
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(r.scale(12)),
-          borderSide:   const BorderSide(color: DAColors.border, width: 1.5),
+          borderSide: const BorderSide(color: DAColors.border, width: 1.5),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(r.scale(12)),
-          borderSide:   const BorderSide(color: DAColors.border, width: 1.5),
+          borderSide: const BorderSide(color: DAColors.border, width: 1.5),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(r.scale(12)),
-          borderSide:   const BorderSide(color: DAColors.greenMid, width: 2),
+          borderSide: const BorderSide(color: DAColors.greenMid, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(r.scale(12)),
-          borderSide:   const BorderSide(color: Colors.red, width: 1.5),
+          borderSide: const BorderSide(color: Colors.red, width: 1.5),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(r.scale(12)),
-          borderSide:   const BorderSide(color: Colors.red, width: 2),
+          borderSide: const BorderSide(color: Colors.red, width: 2),
         ),
       ),
     );
@@ -408,83 +392,44 @@ class _LoginButton extends StatelessWidget {
     required this.r,
   });
 
-  final bool             isLoading;
-  final VoidCallback     onTap;
+  final bool isLoading;
+  final VoidCallback onTap;
   final ResponsiveHelper r;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width:  double.infinity,
+      width: double.infinity,
       height: r.buttonHeight,
       child: ElevatedButton(
         onPressed: isLoading ? null : onTap,
         style: ElevatedButton.styleFrom(
-          backgroundColor:         DAColors.amberLight,
+          backgroundColor: DAColors.amberLight,
           disabledBackgroundColor: DAColors.amberLight.withOpacity(0.7),
-          foregroundColor:         DAColors.white,
-          elevation:               0,
+          foregroundColor: DAColors.white,
+          elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(r.scale(14)),
           ),
         ),
         child: isLoading
             ? SizedBox(
-                width:  r.scale(22),
+                width: r.scale(22),
                 height: r.scale(22),
                 child: const CircularProgressIndicator(
-                  color:       DAColors.white,
+                  color: DAColors.white,
                   strokeWidth: 2.5,
                 ),
               )
             : Text(
                 'Login',
                 style: GoogleFonts.poppins(
-                  fontSize:      r.scaleFont(15),
-                  fontWeight:    FontWeight.w700,
-                  color:         DAColors.white,
+                  fontSize: r.scaleFont(15),
+                  fontWeight: FontWeight.w700,
+                  color: DAColors.white,
                   letterSpacing: 0.5,
                 ),
               ),
-      ),
-    );
-  }
-}
-
-/// DEV ONLY — quick role login button
-class _DevRoleButton extends StatelessWidget {
-  const _DevRoleButton({
-    required this.label,
-    required this.color,
-    required this.onTap,
-    required this.r,
-  });
-
-  final String           label;
-  final Color            color;
-  final VoidCallback     onTap;
-  final ResponsiveHelper r;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: r.scale(10)),
-        decoration: BoxDecoration(
-          color:        color.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(r.scale(10)),
-          border:       Border.all(color: color.withOpacity(0.40), width: 1.5),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: GoogleFonts.poppins(
-            fontSize:   r.scaleFont(11),
-            fontWeight: FontWeight.w600,
-            color:      color,
-          ),
-        ),
       ),
     );
   }
@@ -497,15 +442,15 @@ class _FallbackLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width:  size,
+      width: size,
       height: size,
       child: Center(
         child: Text(
           'DA',
           style: TextStyle(
-            fontSize:   size * 0.3,
+            fontSize: size * 0.3,
             fontWeight: FontWeight.w800,
-            color:      DAColors.white,
+            color: DAColors.white,
           ),
         ),
       ),

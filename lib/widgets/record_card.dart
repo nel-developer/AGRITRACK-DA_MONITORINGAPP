@@ -4,31 +4,42 @@ import '../theme/da_colors.dart';
 
 // ── Data model ────────────────────────────────────────────────────
 class RecordModel {
+  final String? id;
   final String name;
   final String productionType;
-  final String implType;       // Collective / Individual / Hybrid
+  final String implType; // Collective / Individual / Hybrid
   final String enumerator;
   final String date;
-  final String status;         // draft / unsync / pending / approved
+  final String status; // unsync / pending / approved
+  final String? documentPath;
+  final Map<String, dynamic>? data;
+  final bool isLocal;
 
   const RecordModel({
+    this.id,
     required this.name,
     required this.productionType,
     required this.implType,
     required this.enumerator,
     required this.date,
     required this.status,
+    this.documentPath,
+    this.data,
+    this.isLocal = false,
   });
 }
 
 // ── Status color helper ───────────────────────────────────────────
 Color statusColor(String status) {
   switch (status.toLowerCase()) {
-    case 'draft':    return const Color(0xFF9E9E9E);
-    case 'unsync':   return Colors.red;
-    case 'pending':  return const Color(0xFFFFB300);
-    case 'approved': return DAColors.greenMid;
-    default:         return DAColors.greenMid;
+    case 'unsync':
+      return const Color(0xFF9E9E9E);
+    case 'pending':
+      return const Color(0xFFFFB300);
+    case 'approved':
+      return DAColors.greenMid;
+    default:
+      return DAColors.greenMid;
   }
 }
 
@@ -38,19 +49,19 @@ class RecordCard extends StatelessWidget {
     super.key,
     required this.record,
     required this.tabColor,
-    this.showEdit      = false,
-    this.showSync      = false,
-    this.showApprove   = false,
+    this.showEdit = false,
+    this.showSync = false,
+    this.showApprove = false,
     this.approveLocked = false,
     required this.onTap,
   });
 
   final RecordModel record;
-  final Color       tabColor;
-  final bool        showEdit;
-  final bool        showSync;
-  final bool        showApprove;
-  final bool        approveLocked;
+  final Color tabColor;
+  final bool showEdit;
+  final bool showSync;
+  final bool showApprove;
+  final bool approveLocked;
   final VoidCallback onTap;
 
   @override
@@ -59,24 +70,26 @@ class RecordCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color:        Colors.white,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          boxShadow: [BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 8, offset: const Offset(0, 2))],
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 8,
+                offset: const Offset(0, 2))
+          ],
         ),
         child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-
               // Colored left status bar
               Container(
                 width: 5,
                 decoration: BoxDecoration(
                   color: tabColor,
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(14)),
+                  borderRadius:
+                      const BorderRadius.horizontal(left: Radius.circular(14)),
                 ),
               ),
 
@@ -87,16 +100,17 @@ class RecordCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-
                       // Name + View button
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
-                            child: Text(record.name,
+                            child: Text(
+                              record.name,
                               style: GoogleFonts.poppins(
-                                fontSize: 16, fontWeight: FontWeight.w800,
-                                color: DAColors.textDark),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: DAColors.textDark),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -109,10 +123,12 @@ class RecordCard extends StatelessWidget {
                                 color: DAColors.greenMid,
                                 borderRadius: BorderRadius.circular(50),
                               ),
-                              child: Text('View',
+                              child: Text(
+                                'View',
                                 style: GoogleFonts.poppins(
-                                  fontSize: 13, fontWeight: FontWeight.w700,
-                                  color: Colors.white),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white),
                               ),
                             ),
                           ),
@@ -125,51 +141,58 @@ class RecordCard extends StatelessWidget {
                       Row(
                         children: [
                           Text(record.productionType,
-                            style: GoogleFonts.poppins(
-                              fontSize: 13, color: DAColors.textMuted)),
+                              style: GoogleFonts.poppins(
+                                  fontSize: 13, color: DAColors.textMuted)),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8),
                             child: Text('|',
-                              style: GoogleFonts.poppins(
-                                fontSize: 13, color: DAColors.textMuted)),
+                                style: GoogleFonts.poppins(
+                                    fontSize: 13, color: DAColors.textMuted)),
                           ),
                           Text(record.implType,
-                            style: GoogleFonts.poppins(
-                              fontSize: 13, fontWeight: FontWeight.w700,
-                              color: DAColors.textDark)),
+                              style: GoogleFonts.poppins(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: DAColors.textDark)),
                         ],
                       ),
 
                       const SizedBox(height: 8),
 
-                      // Date chip + Enumerator
+                      // Date chip + Enumerator / Sync user
                       Row(
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFEEEEEE),
-                              borderRadius: BorderRadius.circular(50),
+                          if (record.status.toLowerCase() == 'unsync')
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEEEEEE),
+                                borderRadius: BorderRadius.circular(50),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.calendar_month_outlined,
+                                      size: 13, color: Color(0xFF666666)),
+                                  const SizedBox(width: 4),
+                                  Text(record.date,
+                                      style: GoogleFonts.poppins(
+                                          fontSize: 11,
+                                          color: const Color(0xFF666666))),
+                                ],
+                              ),
                             ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.calendar_month_outlined,
-                                  size: 13, color: Color(0xFF666666)),
-                                const SizedBox(width: 4),
-                                Text(record.date,
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 11,
-                                    color: const Color(0xFF666666))),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 10),
+                          if (record.status.toLowerCase() == 'unsync')
+                            const SizedBox(width: 10),
                           Expanded(
-                            child: Text('Enumerator : ${record.enumerator}',
+                            child: Text(
+                              record.status.toLowerCase() == 'unsync'
+                                  ? 'Enumerator: ${record.enumerator}'
+                                  : 'Synced by: ${record.enumerator}',
                               style: GoogleFonts.poppins(
-                                fontSize: 12, fontWeight: FontWeight.w600,
-                                color: DAColors.textDark),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: DAColors.textDark),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),

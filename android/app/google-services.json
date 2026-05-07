@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "221749572081",
+    "project_id": "da-saad-profiling",
+    "storage_bucket": "da-saad-profiling.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:221749572081:android:de52623f802ad6a94c1450",
+        "android_client_info": {
+          "package_name": "com.example.da_monitoring_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqIt5CBrO0iuryOr10rkuYRWkKASIzhvM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:221749572081:android:d042f1132c35d1b34c1450",
+        "android_client_info": {
+          "package_name": "com.example.da_project_1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqIt5CBrO0iuryOr10rkuYRWkKASIzhvM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

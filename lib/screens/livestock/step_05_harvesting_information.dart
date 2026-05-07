@@ -9,8 +9,7 @@ import '../../widgets/crop_field.dart';
 import '../../widgets/crop_dropdown.dart';
 
 class LivestockStep5HarvestingInformation extends StatefulWidget {
-  const LivestockStep5HarvestingInformation(
-      {super.key, required this.wrapper});
+  const LivestockStep5HarvestingInformation({super.key, required this.wrapper});
   final LivestockStepWrapper wrapper;
 
   @override
@@ -18,49 +17,51 @@ class LivestockStep5HarvestingInformation extends StatefulWidget {
       _LivestockStep5State();
 }
 
-class _LivestockStep5State
-    extends State<LivestockStep5HarvestingInformation> {
+class _LivestockStep5State extends State<LivestockStep5HarvestingInformation> {
   LivestockStepWrapper get w => widget.wrapper;
 
   // Fattener
   String? _soldAsLiveweight;
-  String  _soldAsLiveweightRemarks = '';
-  String  _avgMarketableWeight     = '';
+  String _soldAsLiveweightRemarks = '';
+  String _avgMarketableWeight = '';
 
   // Dairy
-  String _milkVolumeDaily   = '';
+  String _milkVolumeDaily = '';
   String _farmgatePriceMilk = '';
-  String _milkUnit          = '';
+  String _milkUnit = '';
 
   // Breeder
   String _slaughteredCount = '';
   String _slaughteredPrice = '';
 
-  // Postharvest / Processing
-  String? _postharvest;
-  String  _postharvestRemarks = '';
-  String? _processing;
-  String  _processingRemarks  = '';
-
   bool get _isFattener => w.purposeMeat;
-  bool get _isDairy    => w.purposeDairy;
-  bool get _isBreeder  => w.purposeBreeding;
+  bool get _isDairy => w.purposeDairy;
+  bool get _isBreeder => w.purposeBreeding;
 
   static const _yesNo = ['Yes', 'No'];
 
+  @override
+  void initState() {
+    super.initState();
+    _soldAsLiveweight = w.soldAsLiveweight;
+    _soldAsLiveweightRemarks = w.soldAsLiveweightRemarks;
+    _avgMarketableWeight = w.avgMarketableWeight;
+    _milkVolumeDaily = w.milkVolumeDaily;
+    _farmgatePriceMilk = w.farmgatePriceMilk;
+    _milkUnit = w.milkUnit;
+    _slaughteredCount = w.slaughteredCount;
+    _slaughteredPrice = w.slaughteredPrice;
+  }
+
   void _next() {
-    w.soldAsLiveweight         = _soldAsLiveweight;
-    w.soldAsLiveweightRemarks  = _soldAsLiveweightRemarks;
-    w.avgMarketableWeight      = _avgMarketableWeight;
-    w.milkVolumeDaily          = _milkVolumeDaily;
-    w.farmgatePriceMilk        = _farmgatePriceMilk;
-    w.milkUnit                 = _milkUnit;
-    w.slaughteredCount         = _slaughteredCount;
-    w.slaughteredPrice         = _slaughteredPrice;
-    w.postharvest              = _postharvest;
-    w.postharvestRemarks       = _postharvestRemarks;
-    w.processing               = _processing;
-    w.processingRemarks        = _processingRemarks;
+    w.soldAsLiveweight = _soldAsLiveweight;
+    w.soldAsLiveweightRemarks = _soldAsLiveweightRemarks;
+    w.avgMarketableWeight = _avgMarketableWeight;
+    w.milkVolumeDaily = _milkVolumeDaily;
+    w.farmgatePriceMilk = _farmgatePriceMilk;
+    w.milkUnit = _milkUnit;
+    w.slaughteredCount = _slaughteredCount;
+    w.slaughteredPrice = _slaughteredPrice;
 
     Navigator.of(context).pushNamed(
       AppRoutes.livestockStep6,
@@ -71,11 +72,11 @@ class _LivestockStep5State
   @override
   Widget build(BuildContext context) {
     return CropFormShell(
-      formTitle:    'LIVESTOCK PRODUCTION',
+      formTitle: 'LIVESTOCK PRODUCTION',
       formSubtitle: 'Livestock Production Monitoring Form',
-      currentStep:  4,
-      onNext:       _next,
-      child:        _buildForm(),
+      currentStep: 4,
+      onNext: _next,
+      child: _buildForm(),
     );
   }
 
@@ -83,7 +84,6 @@ class _LivestockStep5State
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-
         _sectionTitle('Harvesting Information'),
         const SizedBox(height: 24),
 
@@ -91,12 +91,11 @@ class _LivestockStep5State
         if (_isFattener) ...[
           _purposeLabel('Fattener'),
           const SizedBox(height: 12),
-
           CropDropdown(
-            label:     'Sold as liveweight (Y/N)',
-            hint:      'Choose',
-            value:     _soldAsLiveweight,
-            items:     _yesNo,
+            label: 'Sold as liveweight (Y/N)',
+            hint: 'Choose',
+            value: _soldAsLiveweight,
+            items: _yesNo,
             onChanged: (v) => setState(() {
               _soldAsLiveweight = v;
               if (v == 'No') _soldAsLiveweightRemarks = '';
@@ -105,20 +104,17 @@ class _LivestockStep5State
           if (_soldAsLiveweight != null) ...[
             const SizedBox(height: 8),
             _remarksToggle(
-              remarks:   _soldAsLiveweightRemarks,
-              onChanged: (v) => setState(
-                  () => _soldAsLiveweightRemarks = v),
+              remarks: _soldAsLiveweightRemarks,
+              onChanged: (v) => setState(() => _soldAsLiveweightRemarks = v),
             ),
           ],
           const SizedBox(height: 16),
-
           CropField(
-            label:        'Average marketable weight',
-            hint:         'Enter',
+            label: 'Average marketable weight',
+            hint: 'Enter',
             initialValue: _avgMarketableWeight,
-            onChanged:    (v) => _avgMarketableWeight = v,
-            keyboardType: const TextInputType.numberWithOptions(
-                decimal: true),
+            onChanged: (v) => _avgMarketableWeight = v,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
               FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
             ],
@@ -130,38 +126,33 @@ class _LivestockStep5State
         if (_isDairy) ...[
           _purposeLabel('Dairy'),
           const SizedBox(height: 12),
-
           CropField(
-            label:        'Average volume of milk produced daily',
-            hint:         'Enter',
+            label: 'Average volume of milk produced daily',
+            hint: 'Enter',
             initialValue: _milkVolumeDaily,
-            onChanged:    (v) => _milkVolumeDaily = v,
-            keyboardType: const TextInputType.numberWithOptions(
-                decimal: true),
+            onChanged: (v) => _milkVolumeDaily = v,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
               FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
             ],
           ),
           const SizedBox(height: 16),
-
           CropField(
-            label:        'Farmgate price of milk in the area',
-            hint:         'Enter',
+            label: 'Farmgate price of milk in the area',
+            hint: 'Enter',
             initialValue: _farmgatePriceMilk,
-            onChanged:    (v) => _farmgatePriceMilk = v,
-            keyboardType: const TextInputType.numberWithOptions(
-                decimal: true),
+            onChanged: (v) => _farmgatePriceMilk = v,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
               FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
             ],
           ),
           const SizedBox(height: 16),
-
           CropField(
-            label:        'Unit',
-            hint:         'Enter',
+            label: 'Unit',
+            hint: 'Enter',
             initialValue: _milkUnit,
-            onChanged:    (v) => _milkUnit = v,
+            onChanged: (v) => _milkUnit = v,
           ),
           const SizedBox(height: 24),
         ],
@@ -170,61 +161,27 @@ class _LivestockStep5State
         if (_isBreeder) ...[
           _purposeLabel('Breeder'),
           const SizedBox(height: 12),
-
           CropField(
-            label:        'Indicate number of slaughtered livestock',
-            hint:         'Enter',
+            label: 'Indicate number of slaughtered livestock',
+            hint: 'Enter',
             initialValue: _slaughteredCount,
-            onChanged:    (v) => _slaughteredCount = v,
+            onChanged: (v) => _slaughteredCount = v,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           ),
           const SizedBox(height: 16),
-
           CropField(
-            label:        'Indicate price of slaughtered livestock',
-            hint:         'Enter',
+            label: 'Indicate price of slaughtered livestock',
+            hint: 'Enter',
             initialValue: _slaughteredPrice,
-            onChanged:    (v) => _slaughteredPrice = v,
-            keyboardType: const TextInputType.numberWithOptions(
-                decimal: true),
+            onChanged: (v) => _slaughteredPrice = v,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
               FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
             ],
           ),
           const SizedBox(height: 24),
         ],
-
-        // ── Postharvest ───────────────────────────────────────
-        _buildLabel('Underwent postharvest (Y/N)'),
-        const SizedBox(height: 8),
-        _attachFileField(
-          hint:    'Attach File',
-          value:   _postharvest ?? '',
-          onTap:   () => _pickFile((v) => setState(
-              () => _postharvest = v)),
-        ),
-        const SizedBox(height: 8),
-        _remarksToggle(
-          remarks:   _postharvestRemarks,
-          onChanged: (v) => setState(() => _postharvestRemarks = v),
-        ),
-        const SizedBox(height: 16),
-
-        // ── Processing ────────────────────────────────────────
-        _buildLabel('Underwent processing (Y/N)'),
-        const SizedBox(height: 8),
-        _attachFileField(
-          hint:  'Attach File',
-          value: _processing ?? '',
-          onTap: () => _pickFile((v) => setState(
-              () => _processing = v)),
-        ),
-        const SizedBox(height: 8),
-        _remarksToggle(
-          remarks:   _processingRemarks,
-          onChanged: (v) => setState(() => _processingRemarks = v),
-        ),
 
         const SizedBox(height: 32),
       ],
@@ -240,13 +197,11 @@ class _LivestockStep5State
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: const Color(0xFFDDDDDD), width: 1.5),
+          border: Border.all(color: const Color(0xFFDDDDDD), width: 1.5),
         ),
         child: Row(
           children: [
@@ -255,9 +210,7 @@ class _LivestockStep5State
                 value.isEmpty ? hint : value,
                 style: GoogleFonts.poppins(
                   fontSize: 14,
-                  color: value.isEmpty
-                      ? DAColors.textMuted
-                      : DAColors.textDark,
+                  color: value.isEmpty ? DAColors.textMuted : DAColors.textDark,
                 ),
               ),
             ),
@@ -282,43 +235,41 @@ class _LivestockStep5State
   }) {
     if (remarks.trim().isNotEmpty) {
       return CropField(
-        label:        'Remarks',
-        hint:         'Enter remarks',
+        label: 'Remarks',
+        hint: 'Enter remarks',
         initialValue: remarks,
-        onChanged:    onChanged,
+        onChanged: onChanged,
       );
     }
     return GestureDetector(
       onTap: () => onChanged(' '),
       child: Row(children: [
         Container(
-          width: 28, height: 28,
+          width: 28,
+          height: 28,
           decoration: const BoxDecoration(
               color: DAColors.greenMid, shape: BoxShape.circle),
-          child: const Icon(Icons.add_rounded,
-              color: Colors.white, size: 18),
+          child: const Icon(Icons.add_rounded, color: Colors.white, size: 18),
         ),
         const SizedBox(width: 8),
         Text('Add Remarks',
-          style: GoogleFonts.poppins(
-            fontSize: 13, fontWeight: FontWeight.w600,
-            color: DAColors.greenMid)),
+            style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: DAColors.greenMid)),
       ]),
     );
   }
 
   Widget _sectionTitle(String t) => Text(t,
-    style: GoogleFonts.poppins(
-      fontSize: 22, fontWeight: FontWeight.w800,
-      color: DAColors.textDark));
+      style: GoogleFonts.poppins(
+          fontSize: 22, fontWeight: FontWeight.w800, color: DAColors.textDark));
 
   Widget _purposeLabel(String t) => Text(t,
-    style: GoogleFonts.poppins(
-      fontSize: 16, fontWeight: FontWeight.w700,
-      color: DAColors.greenMid));
+      style: GoogleFonts.poppins(
+          fontSize: 16, fontWeight: FontWeight.w700, color: DAColors.greenMid));
 
   Widget _buildLabel(String t) => Text(t,
-    style: GoogleFonts.poppins(
-      fontSize: 14, fontWeight: FontWeight.w700,
-      color: DAColors.textDark));
+      style: GoogleFonts.poppins(
+          fontSize: 14, fontWeight: FontWeight.w700, color: DAColors.textDark));
 }
