@@ -28,109 +28,154 @@ class MonitoringRecordService {
     required String implementationType,
     required Map<String, dynamic> data,
   }) async {
-    final user = _auth.currentUser;
-    if (user == null) throw Exception('User not authenticated');
+    try {
+      print('🔥 savePendingRecord START:');
+      print('   productionType: $productionType');
+      print('   implementationType: $implementationType');
 
-    final fcaName = (data['fcaName'] as String? ?? 'Unknown Group').trim();
+      final user = _auth.currentUser;
+      print('   user: $user');
+      if (user == null) throw Exception('User not authenticated');
 
-    // ✅ LEVEL 1: PROJECT BACKGROUND at FCA document level
-    final projectBackground = {
-      'fcaName': fcaName,
-      'productionType': productionType,
-      'implementationType': implementationType,
-      'region': data['region'] ?? '',
-      'province': data['province'] ?? '',
-      'municipality': data['municipality'] ?? '',
-      'barangay': data['barangay'] ?? '',
-      'projectTitle': data['projectTitle'] ?? '',
-      'primaryIntervention': data['primaryIntervention'] ?? '',
-      'primaryInterventionOther': data['primaryInterventionOther'] ?? '',
-      'supportInterventions': data['supportInterventions'] ?? [],
-      'reportingPeriod': data['reportingPeriod'] ?? '',
-      'createdBy': user.uid,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'approvalStatus': 'pending',
-    };
+      final fcaName = (data['fcaName'] as String? ?? 'Unknown Group').trim();
+      print('   fcaName: $fcaName');
 
-    // Use FCA name as document ID
-    final groupDocId =
-        '${productionType.toLowerCase()}_${fcaName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}';
-    final groupDocRef =
-        _firestore.collection(_pendingCollection).doc(groupDocId);
+      // ✅ DETECT PRODUCTION TYPE EARLY
+      final detectedType = productionType.toLowerCase().trim();
+      final typePrefix = detectedType == 'crop'
+          ? 'crop'
+          : detectedType == 'poultry'
+              ? 'poultry'
+              : detectedType == 'livestock'
+                  ? 'livestock'
+                  : 'unknown';
 
-    // ✅ Save project background as main FCA document
-    await groupDocRef.set(projectBackground, SetOptions(merge: true));
+      // ✅ VALIDATE PRODUCTION TYPE
+      if (typePrefix == 'unknown') {
+        throw Exception(
+            'Invalid production type: "$productionType". Must be crop, livestock, or poultry.');
+      }
 
-    // ✅ LEVEL 2 & 3: Extract and save members with their commodities
-    Map<String, dynamic> membersByFarmerId = {};
-    List<Map<String, dynamic>> completedCommodities = [];
-
-    if (data['membersByFarmerId'] != null) {
-      membersByFarmerId = Map<String, dynamic>.from(data['membersByFarmerId']);
-    } else if (data['farmerName'] != null &&
-        (data['farmerName'] as String).isNotEmpty) {
-      // Individual record - treat as single farmer
-      final farmerName = (data['farmerName'] as String).trim();
-      final saadId = (data['saadIdNo'] as String? ?? '').trim();
-      final farmerId = saadId.isNotEmpty ? saadId : farmerName;
-      membersByFarmerId[farmerId] = {
-        'farmerName': farmerName,
-        'saadIdNo': saadId,
+      // ✅ LEVEL 1: PROJECT BACKGROUND at FCA document level
+      final projectBackground = {
+        'fcaName': fcaName,
+        'productionType': productionType,
+        'implementationType': implementationType,
+        'region': data['region'] ?? '',
+        'province': data['province'] ?? '',
+        'municipality': data['municipality'] ?? '',
+        'barangay': data['barangay'] ?? '',
+        'projectTitle': data['projectTitle'] ?? '',
+        'primaryIntervention': data['primaryIntervention'] ?? '',
+        'primaryInterventionOther': data['primaryInterventionOther'] ?? '',
+        'supportInterventions': data['supportInterventions'] ?? [],
+        'reportingPeriod': data['reportingPeriod'] ?? '',
+        'createdBy': user.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'approvalStatus': 'pending',
       };
-    }
 
-    // Collect all completed commodities/batches
-    if (data['completedCommodities'] != null) {
-      completedCommodities =
-          List<Map<String, dynamic>>.from(data['completedCommodities']);
-    } else if (data['completedBatches'] != null) {
-      completedCommodities =
-          List<Map<String, dynamic>>.from(data['completedBatches']);
-    }
+      // Use FCA name as document ID with detected type prefix
+      final groupDocId =
+          '${typePrefix}_${fcaName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}';
+      final groupDocRef =
+          _firestore.collection(_pendingCollection).doc(groupDocId);
 
-    // ✅ Save each farmer in members subcollection with their commodities
-    for (final saadId in membersByFarmerId.keys) {
-      final farmer = membersByFarmerId[saadId];
-      if (farmer is Map<String, dynamic>) {
-        final farmerName = (farmer['farmerName'] as String? ?? saadId).trim();
-        final farmerSaadId = (farmer['saadIdNo'] as String? ?? '').trim();
+      print('   groupDocId: $groupDocId');
+      print('   Saving projectBackground...');
 
-        // LEVEL 2: Save PERSONAL DATA in members subcollection
-        // NOTE: Only farmer's name and trainings - location is at FCA level
-        final personalData = {
-          'name': farmerName,
+      // ✅ Save project background as main FCA document
+      await groupDocRef.set(projectBackground, SetOptions(merge: true));
+
+      print('   ✅ projectBackground saved');
+
+      // ✅ LEVEL 2 & 3: Extract and save members with their commodities
+      Map<String, dynamic> membersByFarmerId = {};
+      List<Map<String, dynamic>> completedCommodities = [];
+
+      if (data['membersByFarmerId'] != null) {
+        membersByFarmerId =
+            Map<String, dynamic>.from(data['membersByFarmerId']);
+      } else if (data['farmerName'] != null &&
+          (data['farmerName'] as String).isNotEmpty) {
+        // Individual record - treat as single farmer
+        final farmerName = (data['farmerName'] as String).trim();
+        final saadId = (data['saadIdNo'] as String? ?? '').trim();
+        final farmerId = saadId.isNotEmpty ? saadId : farmerName;
+        membersByFarmerId[farmerId] = {
           'farmerName': farmerName,
-          'saadIdNo': farmerSaadId,
-          'trainings': farmer['trainings'] ?? [],
-          'addedAt': FieldValue.serverTimestamp(),
+          'saadIdNo': saadId,
         };
+      }
 
-        final memberDocRef = groupDocRef.collection('members').doc(saadId);
-        await memberDocRef.set(personalData, SetOptions(merge: true));
+      // Collect all completed commodities/batches
+      if (data['completedCommodities'] != null) {
+        completedCommodities =
+            List<Map<String, dynamic>>.from(data['completedCommodities']);
+      } else if (data['completedBatches'] != null) {
+        completedCommodities =
+            List<Map<String, dynamic>>.from(data['completedBatches']);
+      }
 
-        // LEVEL 3: Save each farmer's COMMODITIES in commodities subcollection
-        // Filter commodities that belong to this farmer
-        // Match by either saadIdNo (if not empty) OR farmerName (if saadIdNo is empty)
-        final farmerCommodities = completedCommodities.where((c) {
-          final commoditySaadId = (c['saadIdNo'] as String? ?? '').trim();
-          final commodityFarmerName = (c['farmerName'] as String? ?? '').trim();
+      // ✅ GLOBAL NUMBERING: Fetch ALL existing commodities from Firebase for this group
+      // to determine the next starting number
+      int globalNextNumber = 1;
+      try {
+        final collectiveSnapshot = await groupDocRef
+            .collection('commodities')
+            .orderBy('commodityId')
+            .get();
 
-          // Match if saadIdNo matches, OR if both are using farmerName as identifier
-          if (farmerSaadId.isNotEmpty && commoditySaadId.isNotEmpty) {
-            return commoditySaadId == farmerSaadId;
-          } else if (farmerSaadId.isEmpty && commodityFarmerName.isNotEmpty) {
-            // Both using farmerName as identifier
-            return commodityFarmerName == farmerName;
+        for (final doc in collectiveSnapshot.docs) {
+          final commodityId = doc['commodityId']?.toString() ?? '';
+          if (commodityId.isNotEmpty) {
+            try {
+              final parts = commodityId.split('_');
+              if (parts.length == 2) {
+                final number = int.tryParse(parts[1]) ?? 0;
+                if (number >= globalNextNumber) {
+                  globalNextNumber = number + 1;
+                }
+              }
+            } catch (e) {
+              // Ignore parsing errors
+            }
           }
-          return false;
-        }).toList();
+        }
 
-        for (int i = 0; i < farmerCommodities.length; i++) {
-          final commodity = farmerCommodities[i];
+        // Also check all member commodities
+        final membersSnapshot = await groupDocRef.collection('members').get();
+        for (final memberDoc in membersSnapshot.docs) {
+          final commSnapshot =
+              await memberDoc.reference.collection('commodities').get();
+          for (final doc in commSnapshot.docs) {
+            final commodityId = doc['commodityId']?.toString() ?? '';
+            if (commodityId.isNotEmpty) {
+              try {
+                final parts = commodityId.split('_');
+                if (parts.length == 2) {
+                  final number = int.tryParse(parts[1]) ?? 0;
+                  if (number >= globalNextNumber) {
+                    globalNextNumber = number + 1;
+                  }
+                }
+              } catch (e) {
+                // Ignore parsing errors
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // If no existing commodities, start from 1
+        globalNextNumber = 1;
+      }
+
+      // ✅ COLLECTIVE TYPE: Save commodities directly to group (no members subcollection)
+      if (implementationType.toLowerCase() == 'collective') {
+        for (int i = 0; i < completedCommodities.length; i++) {
+          final commodity = completedCommodities[i];
           final commodityData = <String, dynamic>{
-            'saadIdNo': saadId,
-            'farmerName': farmerName,
             'recordedAt': FieldValue.serverTimestamp(),
           };
 
@@ -523,36 +568,571 @@ class MonitoringRecordService {
               });
           }
 
-          // ✅ Generate unique commodity ID based on production type during sync
-          final commodityId = CommodityIdService.generateCommodityId(
-            productionType,
-            farmerCommodities,
-          );
-          commodityData['commodityId'] = commodityId;
+          // ✅ COLLECTIVE GLOBAL COMMODITY ID - using globally tracked number
+          final currentNumber = globalNextNumber + i;
+          final commodityId =
+              '${typePrefix}_${currentNumber.toString().padLeft(3, '0')}';
 
-          await memberDocRef
+          commodityData['commodityId'] = commodityId;
+          commodity['commodityId'] = commodityId;
+
+          await groupDocRef
               .collection('commodities')
               .doc(commodityId)
               .set(commodityData);
         }
-      }
-    }
 
-    if (kDebugMode) {
-      print('✅ 3-LEVEL HIERARCHICAL STRUCTURE SAVED');
-      print('   FCA: $fcaName');
-      print('   Production: $productionType - $implementationType');
-      print('   Members: ${membersByFarmerId.length}');
+        if (kDebugMode) {
+          print('✅ COLLECTIVE STRUCTURE SAVED');
+          print('   FCA: $fcaName');
+          print(
+              '   Production Type: $productionType → $detectedType ($typePrefix)');
+          print('   Implementation: $implementationType');
+          print('   Commodities: ${completedCommodities.length}');
+        }
+
+        return groupDocId;
+      }
+
+      // ✅ INDIVIDUAL/HYBRID: Save each farmer in members subcollection with their commodities
+      print('📋 INDIVIDUAL/HYBRID PATH:');
+      print('   membersByFarmerId keys: ${membersByFarmerId.keys.toList()}');
+      print('   Total members to sync: ${membersByFarmerId.length}');
+
       for (final saadId in membersByFarmerId.keys) {
-        final memberCommodities = completedCommodities
-            .where((c) => (c['saadIdNo'] as String? ?? '') == saadId)
-            .length;
-        print(
-            '     - ${membersByFarmerId[saadId]['farmerName']}: $memberCommodities commodity/ies');
-      }
-    }
+        try {
+          print('🌾 Processing member: $saadId');
+          final farmer = membersByFarmerId[saadId];
+          if (farmer is Map<String, dynamic>) {
+            final farmerName =
+                (farmer['farmerName'] as String? ?? saadId).trim();
+            final farmerSaadId = (farmer['saadIdNo'] as String? ?? '').trim();
 
-    return groupDocId;
+            print('   Name: $farmerName | SAAD: $farmerSaadId');
+
+            // LEVEL 2: Save PERSONAL DATA in members subcollection
+            // NOTE: Only farmer's name and trainings - location is at FCA level
+            final personalData = {
+              'name': farmerName,
+              'farmerName': farmerName,
+              'saadIdNo': farmerSaadId,
+              'trainings': farmer['trainings'] ?? [],
+              'addedAt': FieldValue.serverTimestamp(),
+            };
+
+            final memberDocRef = groupDocRef.collection('members').doc(saadId);
+            print('   ✍️ Writing personal data to members/$saadId');
+            await memberDocRef.set(personalData, SetOptions(merge: true));
+            print('   ✅ Personal data saved');
+
+            // LEVEL 3: Save each farmer's COMMODITIES in commodities subcollection
+            // Filter commodities that belong to this farmer
+            // Match by either saadIdNo (if not empty) OR farmerName (if saadIdNo is empty)
+            final farmerCommodities = completedCommodities.where((c) {
+              final commoditySaadId = (c['saadIdNo'] as String? ?? '').trim();
+              final commodityFarmerName =
+                  (c['farmerName'] as String? ?? '').trim();
+
+              // Match if saadIdNo matches, OR if both are using farmerName as identifier
+              if (farmerSaadId.isNotEmpty && commoditySaadId.isNotEmpty) {
+                return commoditySaadId == farmerSaadId;
+              } else if (farmerSaadId.isEmpty &&
+                  commodityFarmerName.isNotEmpty) {
+                // Both using farmerName as identifier
+                return commodityFarmerName == farmerName;
+              }
+              return false;
+            }).toList();
+
+            // ✅ GLOBAL NUMBERING: use the already-computed global counter
+            // across all farmers in this FCA group, not just for the current farmer.
+            int currentNumber = globalNextNumber;
+
+            for (int i = 0; i < farmerCommodities.length; i++) {
+              final commodity = farmerCommodities[i];
+              final commodityData = <String, dynamic>{
+                'saadIdNo': saadId,
+                'farmerName': farmerName,
+                'recordedAt': FieldValue.serverTimestamp(),
+              };
+              switch (productionType.toLowerCase()) {
+                case 'crop':
+                  commodityData.addAll({
+                    'typeOfCrop': commodity['typeOfCrop'] ?? '',
+                    'variety': commodity['variety'] ?? '',
+                    'inputsReceived': commodity['inputsReceived'] ?? [],
+                    'inputsPurchased': commodity['inputsPurchased'] ?? [],
+                    'farmgatePrices': commodity['farmgatePrices'] ?? {},
+                    'totalCostPurchased': commodity['totalCostPurchased'] ?? '',
+                    'qtyVsArea': commodity['qtyVsArea'] ?? '',
+                    'croppingCycles': commodity['croppingCycles'] ?? '',
+                    'qtyVsCycles': commodity['qtyVsCycles'] ?? '',
+                    'peakVolume': commodity['peakVolume'] ?? '',
+                    'peakMonth': commodity['peakMonth'] ?? '',
+                    'volumesPerCycle': commodity['volumesPerCycle'] ?? [],
+                    'farmgatePrice': commodity['farmgatePrice'] ?? '',
+                    'totalLandArea': commodity['totalLandArea'] ??
+                        data['totalLandArea'] ??
+                        '',
+                    'landOwnership': commodity['landOwnership'] ??
+                        data['landOwnership'] ??
+                        '',
+                    'landOwnershipOther': commodity['landOwnershipOther'] ??
+                        data['landOwnershipOther'] ??
+                        '',
+                    'usufructAgreement': commodity['usufructAgreement'] ??
+                        data['usufructAgreement'] ??
+                        '',
+                    'landRemarks':
+                        commodity['landRemarks'] ?? data['landRemarks'] ?? [],
+                    'machineryType': commodity['machineryType'] ??
+                        data['machineryType'] ??
+                        '',
+                    'machineryOther': commodity['machineryOther'] ??
+                        data['machineryOther'] ??
+                        '',
+                    'machineryRemarks': commodity['machineryRemarks'] ??
+                        data['machineryRemarks'] ??
+                        [],
+                    'landPrepCostPerCycle': commodity['landPrepCostPerCycle'] ??
+                        data['landPrepCostPerCycle'] ??
+                        [],
+                    'landPrepStartDate': commodity['landPrepStartDate'] ??
+                        data['landPrepStartDate'] ??
+                        '',
+                    'landPrepDays':
+                        commodity['landPrepDays'] ?? data['landPrepDays'] ?? '',
+                    'sourceOfWater': commodity['sourceOfWater'] ??
+                        data['sourceOfWater'] ??
+                        '',
+                    'plantingDate':
+                        commodity['plantingDate'] ?? data['plantingDate'] ?? '',
+                    'seedAmount':
+                        commodity['seedAmount'] ?? data['seedAmount'] ?? '',
+                    'seedUnit': commodity['seedUnit'] ?? data['seedUnit'] ?? '',
+                    'germinationRate': commodity['germinationRate'] ??
+                        data['germinationRate'] ??
+                        '',
+                    'goodGermination': commodity['goodGermination'] ??
+                        data['goodGermination'] ??
+                        '',
+                    'germinationReason': commodity['germinationReason'] ??
+                        data['germinationReason'] ??
+                        '',
+                    'fertilizerType': commodity['fertilizerType'] ??
+                        data['fertilizerType'] ??
+                        '',
+                    'organicSource': commodity['organicSource'] ??
+                        data['organicSource'] ??
+                        '',
+                    'organicBagsSAAD': commodity['organicBagsSAAD'] ??
+                        data['organicBagsSAAD'] ??
+                        '',
+                    'organicBagsCommercial':
+                        commodity['organicBagsCommercial'] ??
+                            data['organicBagsCommercial'] ??
+                            '',
+                    'organicTotalCost': commodity['organicTotalCost'] ??
+                        data['organicTotalCost'] ??
+                        '',
+                    'organicBagsCycle': commodity['organicBagsCycle'] ??
+                        data['organicBagsCycle'] ??
+                        [],
+                    'organicFrequency': commodity['organicFrequency'] ??
+                        data['organicFrequency'] ??
+                        '',
+                    'inorganicType': commodity['inorganicType'] ??
+                        data['inorganicType'] ??
+                        '',
+                    'inorganicBagsSAAD': commodity['inorganicBagsSAAD'] ??
+                        data['inorganicBagsSAAD'] ??
+                        '',
+                    'inorganicMeasure': commodity['inorganicMeasure'] ??
+                        data['inorganicMeasure'] ??
+                        '',
+                    'inorganicTotalCost': commodity['inorganicTotalCost'] ??
+                        data['inorganicTotalCost'] ??
+                        '',
+                    'inorganicBagsCycle': commodity['inorganicBagsCycle'] ??
+                        data['inorganicBagsCycle'] ??
+                        [],
+                    'inorganicFrequency': commodity['inorganicFrequency'] ??
+                        data['inorganicFrequency'] ??
+                        '',
+                    'pesticideRequirement': commodity['pesticideRequirement'] ??
+                        data['pesticideRequirement'] ??
+                        '',
+                    'landAreaCycles': commodity['landAreaCycles'] ??
+                        data['landAreaCycles'] ??
+                        [],
+                    'dateHarvestCycles': commodity['dateHarvestCycles'] ??
+                        data['dateHarvestCycles'] ??
+                        [],
+                    'quantityCycles': commodity['quantityCycles'] ??
+                        data['quantityCycles'] ??
+                        [],
+                    'avgHarvestPerHa': commodity['avgHarvestPerHa'] ??
+                        data['avgHarvestPerHa'] ??
+                        '',
+                    'harvestCostCycles': commodity['harvestCostCycles'] ??
+                        data['harvestCostCycles'] ??
+                        [],
+                    'foodConsumptionPct': commodity['foodConsumptionPct'] ??
+                        data['foodConsumptionPct'] ??
+                        '',
+                    'postharvestRemarks': commodity['postharvestRemarks'] ??
+                        data['postharvestRemarks'] ??
+                        [],
+                    'processingRemarks': commodity['processingRemarks'] ??
+                        data['processingRemarks'] ??
+                        [],
+                  });
+                  break;
+                case 'livestock':
+                  commodityData.addAll({
+                    'breed': commodity['breed'] ?? '',
+                    'inputsReceived': commodity['inputsReceived'] ?? [],
+                    'inputsPurchased': commodity['inputsPurchased'] ?? [],
+                    'farmgatePrices': commodity['farmgatePrices'] ?? [],
+                    'stocksReceived': commodity['stocksReceived'] ??
+                        data['stocksReceived'] ??
+                        '',
+                    'dateReceived':
+                        commodity['dateReceived'] ?? data['dateReceived'] ?? '',
+                    'maleStocks':
+                        commodity['maleStocks'] ?? data['maleStocks'] ?? '',
+                    'femaleStocks':
+                        commodity['femaleStocks'] ?? data['femaleStocks'] ?? '',
+                    'maleToFemaleRatio': commodity['maleToFemaleRatio'] ??
+                        data['maleToFemaleRatio'] ??
+                        '',
+                    'ageUponReceipt': commodity['ageUponReceipt'] ??
+                        data['ageUponReceipt'] ??
+                        '',
+                    'avgWeightUponReceipt': commodity['avgWeightUponReceipt'] ??
+                        data['avgWeightUponReceipt'] ??
+                        '',
+                    'meatProduced':
+                        commodity['meatProduced'] ?? data['meatProduced'] ?? '',
+                    'pregnantStocks': commodity['pregnantStocks'] ??
+                        data['pregnantStocks'] ??
+                        '',
+                    'housingType':
+                        commodity['housingType'] ?? data['housingType'] ?? '',
+                    'farmOwnership': commodity['farmOwnership'] ??
+                        data['farmOwnership'] ??
+                        '',
+                    'farmOwnershipOther': commodity['farmOwnershipOther'] ??
+                        data['farmOwnershipOther'] ??
+                        '',
+                    'usufruct': commodity['usufruct'] ?? data['usufruct'] ?? '',
+                    'usufructRemarks': commodity['usufructRemarks'] ??
+                        data['usufructRemarks'] ??
+                        '',
+                    'healthActivities': commodity['healthActivities'] ??
+                        data['healthActivities'] ??
+                        '',
+                    'healthOthers':
+                        commodity['healthOthers'] ?? data['healthOthers'] ?? '',
+                    'wasteManagement': commodity['wasteManagement'] ??
+                        data['wasteManagement'] ??
+                        '',
+                    'growOutPeriod': commodity['growOutPeriod'] ??
+                        data['growOutPeriod'] ??
+                        '',
+                    'lactationPeriod': commodity['lactationPeriod'] ??
+                        data['lactationPeriod'] ??
+                        '',
+                    'dryPeriod':
+                        commodity['dryPeriod'] ?? data['dryPeriod'] ?? '',
+                    'producedOffspring': commodity['producedOffspring'] ??
+                        data['producedOffspring'] ??
+                        '',
+                    'offspringMale': commodity['offspringMale'] ??
+                        data['offspringMale'] ??
+                        '',
+                    'offspringFemale': commodity['offspringFemale'] ??
+                        data['offspringFemale'] ??
+                        '',
+                    'offspringMFRatio': commodity['offspringMFRatio'] ??
+                        data['offspringMFRatio'] ??
+                        '',
+                    'mortalitiesAfterBirth':
+                        commodity['mortalitiesAfterBirth'] ??
+                            data['mortalitiesAfterBirth'] ??
+                            '',
+                    'remainingOffspring': commodity['remainingOffspring'] ??
+                        data['remainingOffspring'] ??
+                        '',
+                    'grazingArea':
+                        commodity['grazingArea'] ?? data['grazingArea'] ?? '',
+                    'feeds': commodity['feeds'] ?? data['feeds'] ?? [],
+                    'waterSources':
+                        commodity['waterSources'] ?? data['waterSources'] ?? [],
+                    'soldAsLiveweight': commodity['soldAsLiveweight'] ??
+                        data['soldAsLiveweight'] ??
+                        '',
+                    'soldAsLiveweightRemarks':
+                        commodity['soldAsLiveweightRemarks'] ??
+                            data['soldAsLiveweightRemarks'] ??
+                            '',
+                    'avgMarketableWeight': commodity['avgMarketableWeight'] ??
+                        data['avgMarketableWeight'] ??
+                        '',
+                    'milkVolumeDaily': commodity['milkVolumeDaily'] ??
+                        data['milkVolumeDaily'] ??
+                        '',
+                    'farmgatePriceMilk': commodity['farmgatePriceMilk'] ??
+                        data['farmgatePriceMilk'] ??
+                        '',
+                    'milkUnit': commodity['milkUnit'] ?? data['milkUnit'] ?? '',
+                    'slaughteredCount': commodity['slaughteredCount'] ??
+                        data['slaughteredCount'] ??
+                        '',
+                    'slaughteredPrice': commodity['slaughteredPrice'] ??
+                        data['slaughteredPrice'] ??
+                        '',
+                    'postharvest':
+                        commodity['postharvest'] ?? data['postharvest'] ?? '',
+                    'postharvestRemarks': commodity['postharvestRemarks'] ??
+                        data['postharvestRemarks'] ??
+                        '',
+                    'processing':
+                        commodity['processing'] ?? data['processing'] ?? '',
+                    'processingRemarks': commodity['processingRemarks'] ??
+                        data['processingRemarks'] ??
+                        '',
+                  });
+                  break;
+                case 'poultry':
+                  commodityData.addAll({
+                    'breed': commodity['breed'] ?? '',
+                    'inputsReceived': commodity['inputsReceived'] ?? [],
+                    'inputsPurchased': commodity['inputsPurchased'] ?? [],
+                    'farmgatePrices': commodity['farmgatePrices'] ?? [],
+                    'stocksReceived': commodity['stocksReceived'] ??
+                        data['stocksReceived'] ??
+                        '',
+                    'dateReceived':
+                        commodity['dateReceived'] ?? data['dateReceived'] ?? '',
+                    'ageUponReceipt': commodity['ageUponReceipt'] ??
+                        data['ageUponReceipt'] ??
+                        '',
+                    'avgWeightUponReceipt': commodity['avgWeightUponReceipt'] ??
+                        data['avgWeightUponReceipt'] ??
+                        '',
+                    'totalProductiveCycle': commodity['totalProductiveCycle'] ??
+                        data['totalProductiveCycle'] ??
+                        '',
+                    'housingType':
+                        commodity['housingType'] ?? data['housingType'] ?? '',
+                    'landOwnership': commodity['landOwnership'] ??
+                        data['landOwnership'] ??
+                        '',
+                    'landOwnershipOther': commodity['landOwnershipOther'] ??
+                        data['landOwnershipOther'] ??
+                        '',
+                    'usufruct': commodity['usufruct'] ?? data['usufruct'] ?? '',
+                    'maleToFemaleRatio': commodity['maleToFemaleRatio'] ??
+                        data['maleToFemaleRatio'] ??
+                        '',
+                    'eggsProduced':
+                        commodity['eggsProduced'] ?? data['eggsProduced'] ?? '',
+                    'fertilEggs':
+                        commodity['fertilEggs'] ?? data['fertilEggs'] ?? '',
+                    'eggsIncubated': commodity['eggsIncubated'] ??
+                        data['eggsIncubated'] ??
+                        '',
+                    'eggsHatched':
+                        commodity['eggsHatched'] ?? data['eggsHatched'] ?? '',
+                    'hatchingRate':
+                        commodity['hatchingRate'] ?? data['hatchingRate'] ?? '',
+                    'mortalitiesAfterHatch':
+                        commodity['mortalitiesAfterHatch'] ??
+                            data['mortalitiesAfterHatch'] ??
+                            '',
+                    'chicksSold':
+                        commodity['chicksSold'] ?? data['chicksSold'] ?? '',
+                    'eggsSold': commodity['eggsSold'] ?? data['eggsSold'] ?? '',
+                    'harvestedBirds': commodity['harvestedBirds'] ??
+                        data['harvestedBirds'] ??
+                        '',
+                    'totalWeightHarvested': commodity['totalWeightHarvested'] ??
+                        data['totalWeightHarvested'] ??
+                        '',
+                    'avgDailyGain':
+                        commodity['avgDailyGain'] ?? data['avgDailyGain'] ?? '',
+                    'harvestRecovery': commodity['harvestRecovery'] ??
+                        data['harvestRecovery'] ??
+                        '',
+                    'avgLiveWeight': commodity['avgLiveWeight'] ??
+                        data['avgLiveWeight'] ??
+                        '',
+                    'feedConversionRatio': commodity['feedConversionRatio'] ??
+                        data['feedConversionRatio'] ??
+                        '',
+                    'avgAgeHarvested': commodity['avgAgeHarvested'] ??
+                        data['avgAgeHarvested'] ??
+                        '',
+                    'broilerPerformanceIndex':
+                        commodity['broilerPerformanceIndex'] ??
+                            data['broilerPerformanceIndex'] ??
+                            '',
+                    'rangingAge':
+                        commodity['rangingAge'] ?? data['rangingAge'] ?? '',
+                    'totalEggsHarvested': commodity['totalEggsHarvested'] ??
+                        data['totalEggsHarvested'] ??
+                        '',
+                    'avgHarvestRate': commodity['avgHarvestRate'] ??
+                        data['avgHarvestRate'] ??
+                        '',
+                    'weeklyHenDayEggProduction':
+                        commodity['weeklyHenDayEggProduction'] ??
+                            data['weeklyHenDayEggProduction'] ??
+                            '',
+                    'weeklyHDEPFile': commodity['weeklyHDEPFile'] ??
+                        data['weeklyHDEPFile'] ??
+                        '',
+                    'daysUnderMolting': commodity['daysUnderMolting'] ??
+                        data['daysUnderMolting'] ??
+                        '',
+                    'feedType': commodity['feedType'] ?? data['feedType'] ?? '',
+                    'totalFeedConsumed': commodity['totalFeedConsumed'] ??
+                        data['totalFeedConsumed'] ??
+                        '',
+                    'feedPerDay':
+                        commodity['feedPerDay'] ?? data['feedPerDay'] ?? '',
+                    'waterSources':
+                        commodity['waterSources'] ?? data['waterSources'] ?? [],
+                    'sacksManureProduced': commodity['sacksManureProduced'] ??
+                        data['sacksManureProduced'] ??
+                        '',
+                    'sacksManureSold': commodity['sacksManureSold'] ??
+                        data['sacksManureSold'] ??
+                        '',
+                    'sacksManureUsed': commodity['sacksManureUsed'] ??
+                        data['sacksManureUsed'] ??
+                        '',
+                    'manurePricePerSack': commodity['manurePricePerSack'] ??
+                        data['manurePricePerSack'] ??
+                        '',
+                    'hasPest': commodity['hasPest'] ?? data['hasPest'] ?? false,
+                    'pestOccurrence': commodity['pestOccurrence'] ??
+                        data['pestOccurrence'] ??
+                        '',
+                    'pestDate': commodity['pestDate'] ?? data['pestDate'] ?? '',
+                    'pestMortality': commodity['pestMortality'] ??
+                        data['pestMortality'] ??
+                        '',
+                    'hasDisease':
+                        commodity['hasDisease'] ?? data['hasDisease'] ?? false,
+                    'diseaseOccurrence': commodity['diseaseOccurrence'] ??
+                        data['diseaseOccurrence'] ??
+                        '',
+                    'diseaseDate':
+                        commodity['diseaseDate'] ?? data['diseaseDate'] ?? '',
+                    'diseaseMortality': commodity['diseaseMortality'] ??
+                        data['diseaseMortality'] ??
+                        '',
+                    'hasEnvHazard': commodity['hasEnvHazard'] ??
+                        data['hasEnvHazard'] ??
+                        false,
+                    'envOccurrence': commodity['envOccurrence'] ??
+                        data['envOccurrence'] ??
+                        '',
+                    'envDate': commodity['envDate'] ?? data['envDate'] ?? '',
+                    'envMortality':
+                        commodity['envMortality'] ?? data['envMortality'] ?? '',
+                    'hasHumanInduced': commodity['hasHumanInduced'] ??
+                        data['hasHumanInduced'] ??
+                        false,
+                    'humanOccurrence': commodity['humanOccurrence'] ??
+                        data['humanOccurrence'] ??
+                        '',
+                    'humanDate':
+                        commodity['humanDate'] ?? data['humanDate'] ?? '',
+                    'humanMortality': commodity['humanMortality'] ??
+                        data['humanMortality'] ??
+                        '',
+                    'treatment':
+                        commodity['treatment'] ?? data['treatment'] ?? '',
+                    'attachedReport': commodity['attachedReport'] ??
+                        data['attachedReport'] ??
+                        '',
+                    'totalMortalities': commodity['totalMortalities'] ??
+                        data['totalMortalities'] ??
+                        '',
+                    'rejectsCulled': commodity['rejectsCulled'] ??
+                        data['rejectsCulled'] ??
+                        '',
+                    'remainingStocks': commodity['remainingStocks'] ??
+                        data['remainingStocks'] ??
+                        '',
+                  });
+                  break;
+                default:
+                  commodityData.addAll({
+                    'typeOfCrop': commodity['typeOfCrop'] ?? '',
+                    'variety': commodity['variety'] ?? '',
+                    'breed': commodity['breed'] ?? '',
+                    'inputsReceived': commodity['inputsReceived'] ?? [],
+                    'inputsPurchased': commodity['inputsPurchased'] ?? [],
+                    'farmgatePrices': commodity['farmgatePrices'] ?? {},
+                  });
+              }
+
+              // ✅ GLOBAL COMMODITY ID: Sequential numbering across all farmers
+              final commodityId =
+                  '${typePrefix}_${currentNumber.toString().padLeft(3, '0')}';
+
+              commodityData['commodityId'] = commodityId;
+
+              // ✅ Update completedCommodities array so next farmer's count is accurate
+              commodity['commodityId'] = commodityId;
+
+              print('   📤 Writing commodity $commodityId to Firebase');
+              await memberDocRef
+                  .collection('commodities')
+                  .doc(commodityId)
+                  .set(commodityData);
+              print('   ✅ Commodity $commodityId saved');
+
+              currentNumber++;
+            }
+            print('   ✅ All commodities saved for member: $farmerName');
+          }
+        } catch (e) {
+          print('❌ ERROR processing member $saadId: $e');
+          print('   Stack trace: ${StackTrace.current}');
+          rethrow;
+        }
+      }
+      print('✅ All members processed successfully');
+
+      if (kDebugMode) {
+        print('✅ 3-LEVEL HIERARCHICAL STRUCTURE SAVED');
+        print('   FCA: $fcaName');
+        print(
+            '   Production Type: $productionType → $detectedType ($typePrefix)');
+        print('   Implementation: $implementationType');
+        print('   Members: ${membersByFarmerId.length}');
+        for (final saadId in membersByFarmerId.keys) {
+          final memberCommodities = completedCommodities
+              .where((c) => (c['saadIdNo'] as String? ?? '') == saadId)
+              .length;
+          print(
+              '     - ${membersByFarmerId[saadId]['farmerName']}: $memberCommodities commodity/ies');
+        }
+      }
+
+      print('🎉 savePendingRecord COMPLETED SUCCESSFULLY');
+      return groupDocId;
+    } catch (e) {
+      print('❌❌❌ savePendingRecord FAILED: $e');
+      print('   Error type: ${e.runtimeType}');
+      print('   Stack: ${StackTrace.current}');
+      rethrow;
+    }
   }
 
   /// Fetch pending records with 3-level hierarchy (FCA → Members → Commodities)

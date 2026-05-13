@@ -107,8 +107,7 @@ class RecordViewModal extends StatelessWidget {
                             : ((data['farmerName'] as String? ?? '')
                                     .trim()
                                     .isNotEmpty
-                                ? (data['farmerName'] as String? ?? '')
-                                    .trim()
+                                ? (data['farmerName'] as String? ?? '').trim()
                                 : record.name)),
                     style: GoogleFonts.poppins(
                         fontSize: 16,
@@ -408,6 +407,15 @@ class _DynamicRecordFields extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 🔍 DEBUG: Show all fields in data map
+    print('📊 RECORD VIEW MODAL DATA:');
+    print('   - Keys in data: ${data.keys.toList()}');
+    print('   - province: ${data["province"]}');
+    print('   - municipality: ${data["municipality"]}');
+    print('   - barangay: ${data["barangay"]}');
+    print('   - primaryIntervention: ${data["primaryIntervention"]}');
+    print('   - supportInterventions: ${data["supportInterventions"]}');
+    
     final isCollective =
         data['implementationType']?.toString().toLowerCase() == 'collective';
     final shouldShowCommodities = (type == 'crop' && !isGroup) ||
@@ -419,6 +427,17 @@ class _DynamicRecordFields extends StatelessWidget {
 
     if (shouldShowCommodities) {
       final commodities = _extractCommodityList();
+      print(
+          '🔍 _DynamicRecordFields: shouldShowCommodities=$shouldShowCommodities, type=$type, isGroup=$isGroup');
+      print(
+          '   - completedCommodities in data: ${data['completedCommodities'] != null}');
+      print('   - extracted commodities count: ${commodities.length}');
+      if (commodities.isNotEmpty) {
+        for (int i = 0; i < commodities.length; i++) {
+          final c = commodities[i];
+          print('   - commodity[$i]: ${c['typeOfCrop']} ${c['variety']}');
+        }
+      }
       if (commodities.isNotEmpty) {
         final allSections = _sectionsForType(type);
         final commoditySections = allSections.length > 2
@@ -486,10 +505,17 @@ class _DynamicRecordFields extends StatelessWidget {
                       .toList();
                   if (rows.isEmpty) return const <Widget>[];
 
+                  // ✅ Build GPS info if available
+                  final gpsInfo = _buildGPSInfo(commodity);
+
                   return [
                     const SizedBox(height: 10),
                     _SectionHeader(title: section.title),
                     ..._buildFieldRows(rows),
+                    if (gpsInfo.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      ...gpsInfo,
+                    ],
                   ];
                 }).toList(),
               );
@@ -507,9 +533,18 @@ class _DynamicRecordFields extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: sections.map((section) {
-        final rows = section.fields
+        final resolved = section.fields
             .map((field) => _ResolvedField(
                 label: field.label, value: _resolveFieldValue(field.key)))
+            .toList();
+        
+        // 🔍 DEBUG: Log all field values to see what's being filtered
+        print('📋 Section "${section.title}":');
+        for (final field in resolved) {
+          print('   ${field.label}: "${field.value}" (empty: ${field.value.isEmpty})');
+        }
+        
+        final rows = resolved
             .where((field) => field.value.isNotEmpty)
             .toList();
 
@@ -706,6 +741,7 @@ class _DynamicRecordFields extends StatelessWidget {
                 'qtyVsArea',
                 'croppingCycles',
                 'peakVolume',
+                'peakMonth',
                 'totalLandArea',
                 'landOwnership',
                 'landOwnershipOther',
@@ -799,6 +835,12 @@ class _DynamicRecordFields extends StatelessWidget {
     switch (key) {
       case 'recordName':
         return recordName;
+      case 'fcaName':
+        // For group records, use fcaName from data; for others use recordName
+        if (isGroup && (source['fcaName'] as String? ?? '').isNotEmpty) {
+          return source['fcaName'] as String;
+        }
+        return recordName;
       case 'memberName':
         if (memberName?.isNotEmpty == true) {
           return memberName!;
@@ -874,6 +916,32 @@ class _DynamicRecordFields extends StatelessWidget {
             if (attendees.isNotEmpty) '$attendees attendees'
           ].join(' • ');
         }).join('\n');
+      case 'inputsReceived':
+        final inputs = (source['inputsReceived'] as List?) ?? const [];
+        if (inputs.isEmpty) return '';
+        return inputs.map((item) {
+          final row = Map<String, dynamic>.from(item as Map);
+          final inputName = row['name']?.toString() ?? 'Input';
+          final quantity = row['quantity']?.toString() ?? '';
+          return [inputName, if (quantity.isNotEmpty) '$quantity qty']
+              .join(' • ');
+        }).join('\n');
+      case 'inputsPurchased':
+        final inputs = (source['inputsPurchased'] as List?) ?? const [];
+        if (inputs.isEmpty) return '';
+        return inputs.map((item) {
+          final row = Map<String, dynamic>.from(item as Map);
+          final inputName = row['name']?.toString() ?? 'Input';
+          final quantity = row['quantity']?.toString() ?? '';
+          final cost = row['cost']?.toString() ?? '';
+          final month = row['month']?.toString() ?? '';
+          return [
+            inputName,
+            if (quantity.isNotEmpty) '$quantity qty',
+            if (cost.isNotEmpty) '₱$cost',
+            if (month.isNotEmpty) month
+          ].join(' • ');
+        }).join('\n');
       default:
         return _stringifyValue(source[key]);
     }
@@ -914,6 +982,55 @@ class _DynamicRecordFields extends StatelessWidget {
     return value.toString();
   }
 
+  // ✅ Build GPS information widget if available in commodity
+  List<Widget> _buildGPSInfo(Map<String, dynamic> commodity) {
+    final gpsData = commodity['photoGPS'] as Map?;
+    if (gpsData == null) return [];
+
+    final lat = (gpsData['latitude'] as num?)?.toDouble() ?? 0.0;
+    final lon = (gpsData['longitude'] as num?)?.toDouble() ?? 0.0;
+    final accuracy = (gpsData['accuracy'] as num?)?.toDouble() ?? 0.0;
+
+    return [
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.blue.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.blue.shade200),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.location_on, size: 16, color: Colors.blue.shade700),
+                const SizedBox(width: 8),
+                Text(
+                  'Photo GPS Location',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.blue.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Latitude:  $lat\nLongitude: $lon\nAccuracy: ±${accuracy.toStringAsFixed(1)}m',
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                color: Colors.grey.shade700,
+                height: 1.6,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
   List<_SectionDef> _sectionsForType(String type) {
     final isCollective =
         data['implementationType']?.toString().toLowerCase() == 'collective';
@@ -923,7 +1040,7 @@ class _DynamicRecordFields extends StatelessWidget {
       return [
         const _SectionDef('Project Background', [
           _FieldDef('Reporting Period', 'reportingPeriod'),
-          _FieldDef('FCA Name', 'recordName'),
+          _FieldDef('FCA Name', 'fcaName'),
           _FieldDef('Region', 'region'),
           _FieldDef('Province', 'province'),
           _FieldDef('Municipality', 'municipality'),
@@ -947,7 +1064,12 @@ class _DynamicRecordFields extends StatelessWidget {
           const _FieldDef('Total Cost Purchased', 'totalCostPurchased'),
           const _FieldDef('Qty vs Area', 'qtyVsArea'),
           const _FieldDef('Cropping Cycles', 'croppingCycles'),
+          const _FieldDef('Qty vs Cycles', 'qtyVsCycles'),
+          const _FieldDef('Volumes Per Cycle', 'volumesPerCycle'),
           const _FieldDef('Peak Volume', 'peakVolume'),
+          const _FieldDef('Peak Month', 'peakMonth'),
+          const _FieldDef('Inputs Received from FCA', 'inputsReceived'),
+          const _FieldDef('Inputs Purchased by Farmer', 'inputsPurchased'),
         ];
         if (!isCollective) {
           commodityFields.insert(
@@ -957,7 +1079,7 @@ class _DynamicRecordFields extends StatelessWidget {
         final sections = [
           const _SectionDef('Project Background', [
             _FieldDef('Reporting Period', 'reportingPeriod'),
-            _FieldDef('FCA Name', 'recordName'),
+            _FieldDef('FCA Name', 'fcaName'),
             _FieldDef('Region', 'region'),
             _FieldDef('Province', 'province'),
             _FieldDef('Municipality', 'municipality'),
@@ -1059,7 +1181,7 @@ class _DynamicRecordFields extends StatelessWidget {
 
         return [
           const _SectionDef('Project Background', [
-            _FieldDef('FCA Name', 'recordName'),
+            _FieldDef('FCA Name', 'fcaName'),
             _FieldDef('Region', 'region'),
             _FieldDef('Province', 'province'),
             _FieldDef('Municipality', 'municipality'),
@@ -1095,7 +1217,7 @@ class _DynamicRecordFields extends StatelessWidget {
         return [
           const _SectionDef('Project Background', [
             _FieldDef('Reporting Period', 'reportingPeriod'),
-            _FieldDef('FCA Name', 'recordName'),
+            _FieldDef('FCA Name', 'fcaName'),
             _FieldDef('Region', 'region'),
             _FieldDef('Province', 'province'),
             _FieldDef('Municipality', 'municipality'),

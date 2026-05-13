@@ -54,6 +54,7 @@ class RecordCard extends StatelessWidget {
     this.showApprove = false,
     this.approveLocked = false,
     required this.onTap,
+    this.onDelete,
   });
 
   final RecordModel record;
@@ -63,6 +64,7 @@ class RecordCard extends StatelessWidget {
   final bool showApprove;
   final bool approveLocked;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -159,7 +161,7 @@ class RecordCard extends StatelessWidget {
 
                       const SizedBox(height: 8),
 
-                      // Date chip + Enumerator / Sync user
+                      // Date chip + Enumerator / Sync user + Delete button
                       Row(
                         children: [
                           if (record.status.toLowerCase() == 'unsync')
@@ -196,6 +198,21 @@ class RecordCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          if (record.status.toLowerCase() == 'unsync' &&
+                              onDelete != null)
+                            GestureDetector(
+                              onTap: onDelete,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Icon(Icons.delete_outline,
+                                    size: 18, color: Colors.red),
+                              ),
+                            ),
                         ],
                       ),
                     ],

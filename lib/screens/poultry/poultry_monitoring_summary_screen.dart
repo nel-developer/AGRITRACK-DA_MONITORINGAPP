@@ -178,7 +178,7 @@ class _PoultryMonitoringSummaryScreenState
     }
 
     await PendingDraftService.instance.saveDraft(
-      productionType: 'poultry',
+      productionType: widget.wrapper.productionType,
       implementationType: widget.wrapper.implementationType ?? '',
       data: dataToSave,
     );
@@ -301,16 +301,18 @@ class _PoultryMonitoringSummaryScreenState
             '👤 INDIVIDUAL RECORD: farmerName=${dataToSave['farmerName']}, saadIdNo=${dataToSave['saadIdNo']}');
       } else if (widget.wrapper.implementationType?.toLowerCase() ==
           'collective') {
-        // For collective records, store commodities and trainings directly at root level
-        // Don't use membersByFarmerId for collective - store data directly in group record
+        // For collective records, preserve identity and clear members (like crops)
+        dataToSave['farmerName'] = widget.wrapper.farmerName;
+        dataToSave['saadIdNo'] = '';
         dataToSave['membersByFarmerId'] = {};
         dataToSave['members'] = [];
-        print('👥 COLLECTIVE RECORD: Storing data directly in group record');
+        print(
+            '👥 COLLECTIVE RECORD: farmerName=${dataToSave['farmerName']}, saadIdNo cleared');
       } else {
         // For hybrid/group records, use membersByFarmerId
         dataToSave['membersByFarmerId'] = membersByFarmerId;
       }
-      // Update members list to include all farmers for local folder saving (only for collectives/hybrids)
+      // Update members list to include all farmers for local folder saving (only for hybrids)
       if (widget.wrapper.implementationType?.toLowerCase() != 'individual' &&
           widget.wrapper.implementationType?.toLowerCase() != 'collective') {
         dataToSave['membersByFarmerId'] = membersByFarmerId;
@@ -321,7 +323,8 @@ class _PoultryMonitoringSummaryScreenState
             'saadIdNo': entry.key,
           };
         }).toList();
-        print('📁 Members list for folder save: ${dataToSave['members']}');
+        print(
+            '📁 HYBRID Members list for folder save: ${dataToSave['members']}');
         print('📁 Complete members data:');
         for (final m in dataToSave['members']) {
           print('   - ${m['name']} (${m['saadIdNo']})');
@@ -329,14 +332,14 @@ class _PoultryMonitoringSummaryScreenState
       }
 
       print('💾 === SAVING POULTRY RECORD ===');
-      print('   Production Type: poultry');
+      print('   Production Type: ${widget.wrapper.productionType}');
       print('   Implementation Type: ${widget.wrapper.implementationType}');
       print('   FCA Name: ${dataToSave['fcaName']}');
       print('   Total Farmers: ${membersByFarmerId.length}');
       print('   Farmers: ${membersByFarmerId.keys.toList()}');
 
       await PendingDraftService.instance.saveDraft(
-        productionType: 'poultry',
+        productionType: widget.wrapper.productionType,
         implementationType: widget.wrapper.implementationType ?? '',
         data: dataToSave,
       );
@@ -441,7 +444,7 @@ class _PoultryMonitoringSummaryScreenState
     // CRITICAL: Save to ONE group record (fcaName-based dedup)
     // This ensures all farmers in the group are stored together WITH membersByFarmerId for sync
     await PendingDraftService.instance.saveDraft(
-      productionType: 'poultry',
+      productionType: widget.wrapper.productionType,
       implementationType: widget.wrapper.implementationType ?? '',
       data: dataToSave,
     );
@@ -620,7 +623,7 @@ class _PoultryMonitoringSummaryScreenState
     // CRITICAL: Save current state to prevent data loss
     // This ensures the commodity data is persisted before navigating
     await PendingDraftService.instance.saveDraft(
-      productionType: 'poultry',
+      productionType: widget.wrapper.productionType,
       implementationType: widget.wrapper.implementationType ?? '',
       data: dataToSave,
     );
@@ -1036,6 +1039,71 @@ class _PoultryMonitoringSummaryScreenState
                               onAddBatch: () => _addBatchForMember(m),
                             ),
                           )),
+                      // ── Batches section for individual/hybrid ──
+                      const SizedBox(height: 24),
+                      Text('Batches',
+                          style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: DAColors.textDark)),
+                      const SizedBox(height: 10),
+                      if (w.completedCommodities.isEmpty) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: DAColors.border.withOpacity(0.75),
+                                width: 1.2),
+                          ),
+                          child: Text(
+                            'No batches have been added yet. Tap "Add Another Batch" to start.',
+                            style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: DAColors.textMuted,
+                                height: 1.5),
+                          ),
+                        ),
+                      ] else
+                        ...w.completedCommodities.asMap().entries.map((entry) {
+                          final index = entry.key + 1;
+                          final batch = entry.value;
+                          final breed = batch['breed'] as String? ?? '';
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: ExpansionTile(
+                              key: ValueKey('batch_$index'),
+                              title: Text('Batch $index',
+                                  style: GoogleFonts.poppins(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: DAColors.textDark)),
+                              subtitle: Text(
+                                breed.isEmpty ? 'No breed specified' : breed,
+                                style: GoogleFonts.poppins(
+                                    fontSize: 12, color: DAColors.textMuted),
+                              ),
+                              trailing: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                      color: DAColors.pending.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(50)),
+                                  child: Text('Completed',
+                                      style: GoogleFonts.poppins(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: DAColors.pending))),
+                              childrenPadding:
+                                  const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                              children: [
+                                _buildCommodityDetails(batch),
+                              ],
+                            ),
+                          );
+                        }),
                     ]
                   : [
                       const SizedBox(height: 24),
@@ -1067,8 +1135,8 @@ class _PoultryMonitoringSummaryScreenState
                       ] else
                         ...w.completedCommodities.asMap().entries.map((entry) {
                           final index = entry.key + 1;
-                          final commodity = entry.value;
-                          final breed = commodity['breed'] as String? ?? '';
+                          final batch = entry.value;
+                          final breed = batch['breed'] as String? ?? '';
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 12),
                             child: ExpansionTile(
@@ -1097,13 +1165,108 @@ class _PoultryMonitoringSummaryScreenState
                               childrenPadding:
                                   const EdgeInsets.fromLTRB(16, 0, 16, 12),
                               children: [
-                                _buildCommodityDetails(commodity),
+                                _buildCommodityDetails(batch),
                               ],
                             ),
                           );
                         }),
                     ]),
             ]),
+          ),
+        ),
+
+        // ── Trainings ───────────────────────────────────────────
+        Container(
+          padding: EdgeInsets.fromLTRB(hPad, 24, hPad, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Trainings',
+                  style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: DAColors.textDark)),
+              const SizedBox(height: 10),
+              if (w.trainings.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: DAColors.border.withOpacity(0.75), width: 1.2),
+                  ),
+                  child: Text(
+                    'No trainings have been added yet.',
+                    style: GoogleFonts.poppins(
+                        fontSize: 12, color: DAColors.textMuted, height: 1.5),
+                  ),
+                )
+              else
+                ...w.trainings.asMap().entries.map((entry) {
+                  final index = entry.key + 1;
+                  final training = entry.value as Map<String, dynamic>;
+                  final trainingTitle =
+                      training['trainingTitle'] as String? ?? '';
+                  final venue = training['venue'] as String? ?? '';
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: DAColors.greenMid.withOpacity(0.25),
+                            width: 1.5),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: DAColors.greenLight.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Center(
+                                  child: Text('$index',
+                                      style: GoogleFonts.poppins(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: DAColors.greenMid)),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  trainingTitle.isEmpty
+                                      ? 'Training'
+                                      : trainingTitle,
+                                  style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: DAColors.textDark),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (venue.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text('Venue: $venue',
+                                style: GoogleFonts.poppins(
+                                    fontSize: 12, color: DAColors.textMuted)),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+            ],
           ),
         ),
 

@@ -41,13 +41,17 @@ class PhotoCaptureLocationService {
     // Try to get a valid GPS fix before opening the camera
     Position? position;
     try {
+      print('📍 [GPS CAPTURE] Requesting GPS position...');
       position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
           timeLimit: Duration(seconds: 15),
         ),
       );
+      print(
+          '✅ [GPS CAPTURE] Got position: lat=${position.latitude}, lon=${position.longitude}, acc=${position.accuracy.toStringAsFixed(1)}m');
     } catch (e) {
+      print('❌ [GPS CAPTURE] Failed to get GPS: $e');
       throw Exception(
           'Could not get a valid GPS location. Please move to an open area and try again.');
     }
@@ -56,6 +60,8 @@ class PhotoCaptureLocationService {
         position.longitude.isNaN ||
         !position.latitude.isFinite ||
         !position.longitude.isFinite) {
+      print(
+          '❌ [GPS CAPTURE] Invalid coordinates: lat=${position.latitude}, lon=${position.longitude}');
       throw Exception(
           'Could not get a valid GPS location. Please move to an open area and try again.');
     }
@@ -67,14 +73,14 @@ class PhotoCaptureLocationService {
     );
 
     if (image == null) {
+      print('❌ [PHOTO CAPTURE] Photo capture cancelled.');
       throw Exception('Photo capture cancelled.');
     }
 
-    await _writeAndValidateGpsExif(
-      imagePath: image.path,
-      position: position,
-      capturedAt: DateTime.now().toUtc(),
-    );
+    print('✅ [PHOTO CAPTURE] Photo taken at: ${image.path}');
+
+    // NOTE: GPS EXIF will be written in Step 7 after final storage
+    // This avoids duplicate GPS writes and ensures it's in the final location
 
     final storedPath = await _moveToOrganizedStorage(
       sourcePath: image.path,
@@ -83,6 +89,8 @@ class PhotoCaptureLocationService {
       groupName: groupName,
       farmerName: farmerName,
     );
+
+    print('✅ [PHOTO STORAGE] Moved to app_flutter: $storedPath');
 
     return PhotoWithLocation(
       path: storedPath,
@@ -131,6 +139,7 @@ class PhotoCaptureLocationService {
     required Position position,
     required DateTime capturedAt,
   }) async {
+    print('📍 [EXIF WRITE] Starting GPS EXIF write to: $imagePath');
     final exif = await Exif.fromPath(imagePath);
 
     // Validate latitude and longitude before writing EXIF
@@ -139,6 +148,8 @@ class PhotoCaptureLocationService {
         !position.latitude.isFinite ||
         !position.longitude.isFinite) {
       await exif.close();
+      print(
+          '❌ [EXIF WRITE] Invalid coordinates: lat=${position.latitude}, lon=${position.longitude}');
       throw Exception(
           'Invalid GPS coordinates: latitude or longitude is not a valid number.');
     }
@@ -146,6 +157,9 @@ class PhotoCaptureLocationService {
     try {
       final latValue = position.latitude.abs().toString();
       final lonValue = position.longitude.abs().toString();
+
+      print(
+          '📝 [EXIF WRITE] Writing GPS: lat=$latValue (${position.latitude >= 0 ? 'N' : 'S'}), lon=$lonValue (${position.longitude >= 0 ? 'E' : 'W'})');
 
       await exif.writeAttributes({
         'GPSLatitudeRef': position.latitude >= 0 ? 'N' : 'S',
@@ -161,8 +175,15 @@ class PhotoCaptureLocationService {
       final latString = lat?.toString().trim() ?? '';
       final lonString = lon?.toString().trim() ?? '';
       if (latString.isEmpty || lonString.isEmpty) {
+        print(
+            '❌ [EXIF WRITE] Failed to verify write. lat=$latString, lon=$lonString');
         throw Exception('Unable to confirm GPS metadata in photo.');
       }
+      print(
+          '✅ [EXIF WRITE] GPS EXIF verified in cache: lat=$latString, lon=$lonString');
+    } catch (e) {
+      print('❌ [EXIF WRITE] Exception during write: $e');
+      rethrow;
     } finally {
       await exif.close();
     }
@@ -189,6 +210,7 @@ class PhotoCaptureLocationService {
     required String groupName,
     required String farmerName,
   }) async {
+    print('📂 [STORAGE] Starting file move from cache...');
     final rootDirectory = await getApplicationDocumentsDirectory();
     final folderLabel = groupName.trim().isNotEmpty ? groupName : farmerName;
     final folderName = _sanitizeFolderPart(
@@ -216,16 +238,19 @@ class PhotoCaptureLocationService {
     );
     if (!await targetDirectory.exists()) {
       await targetDirectory.create(recursive: true);
+      print('✅ [STORAGE] Created target directory: ${targetDirectory.path}');
     }
 
     final targetPath =
         '${targetDirectory.path}${Platform.pathSeparator}${fileStem}_${productionPart}_$timestamp$extension';
 
     final sourceFile = File(sourcePath);
+    print('📋 [STORAGE] Copying: ${sourceFile.path} → $targetPath');
     final storedFile = await sourceFile.copy(targetPath);
     if (await sourceFile.exists()) {
       await sourceFile.delete();
     }
+    print('✅ [STORAGE] File stored at: ${storedFile.path}');
     return storedFile.path;
   }
 

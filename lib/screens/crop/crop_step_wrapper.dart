@@ -28,12 +28,14 @@ class InputPurchased {
   String name = '';
   String quantity = '';
   String cost = '';
+  String month = '';
 
   Map<String, dynamic> toJson() {
     return {
       'name': name,
       'quantity': quantity,
       'cost': cost,
+      'month': month,
     };
   }
 }
@@ -44,6 +46,12 @@ class CropStepWrapper {
 
   // True when navigating straight to Step 2 to add a new farmer (skip Step 1)
   bool isAddFarmer = false;
+
+  // True when adding a new commodity to an existing farmer (not a new farmer)
+  bool isAddingNewCommodity = false;
+
+  // True when adding a new commodity to the GROUP (not to a farmer)
+  bool isAddingGroupCommodity = false;
 
   // True when editing an existing draft
   bool isEditingDraft = false;
@@ -125,8 +133,6 @@ class CropStepWrapper {
   String avgHarvestPerHa = '';
   List<String> harvestCostCycles = [''];
   String foodConsumptionPct = '';
-  String postharvestFile = '';
-  List<String> postharvestRemarks = [];
   String processingFile = '';
   List<String> processingRemarks = [];
 
@@ -218,8 +224,6 @@ class CropStepWrapper {
     avgHarvestPerHa = '';
     harvestCostCycles = [''];
     foodConsumptionPct = '';
-    postharvestFile = '';
-    postharvestRemarks = [];
     processingFile = '';
     processingRemarks = [];
     hasPest = false;
@@ -251,19 +255,42 @@ class CropStepWrapper {
   }
 
   /// Resets farmer-specific data when adding a new farmer.
-  /// Clears farmer name, SAAD ID, completed commodities, and resets commodity fields.
+  /// Clears farmer name, SAAD ID, completed commodities, trainings, and photos.
   void resetForNewFarmer() {
     saadIdNo = '';
     approvedFarmerProfile = {};
     farmerName = '';
     completedCommodities = [];
+    // Reset trainings and photos for new farmer (empty lists indicate fresh start)
+    trainings = [];
+    farmPhoto = '';
     resetCommodityStageFields();
   }
 
+  /// Resets trainings and photo after saving/navigating.
+  /// Prepares the wrapper for the next commodity entry.
+  void resetTrainingAndPhoto() {
+    trainings = [TrainingEntry()];
+    farmPhoto = '';
+  }
+
   Map<String, dynamic> toJson() {
+    // ✅ FIX: HYBRID should ALWAYS include farmerName/saadIdNo when saving farmer-specific data
+    // The isGroupRecord logic was incorrectly clearing farmer name when selecting approved farmers
+
     // CRITICAL: For collectives, NEVER include farmerName in JSON
     // This ensures the group name (fcaName) is never overwritten
     final isCollective = implementationType?.toLowerCase() == 'collective';
+    final isHybrid = implementationType?.toLowerCase() == 'hybrid';
+
+    // For HYBRID: ALWAYS keep farmerName and saadIdNo - they're needed for ALL farmer records
+    // Whether we're adding a new farmer (isAddFarmer=true) or selecting approved farmer (isAddFarmer=false)
+    // For INDIVIDUAL: Always keep farmerName and completedCommodities
+    // For COLLECTIVE: Never include farmer-specific data
+
+    // Since this method is used when saving farmer-specific records (not group background),
+    // isGroupRecord should be false - we always save commodity data
+    const isGroupRecord = false;
 
     return {
       'implementationType': implementationType,
@@ -278,93 +305,157 @@ class CropStepWrapper {
       'primaryIntervention': primaryIntervention,
       'primaryInterventionOther': primaryInterventionOther,
       'supportInterventions': supportInterventions,
-      'saadIdNo': saadIdNo,
-      'approvedFarmerProfile': approvedFarmerProfile,
-      'farmerName': isCollective ? '' : farmerName,
+      'saadIdNo':
+          isCollective ? '' : saadIdNo, // ✅ Always keep for HYBRID & INDIVIDUAL
+      'approvedFarmerProfile': isCollective
+          ? {}
+          : approvedFarmerProfile, // ✅ Always keep for HYBRID & INDIVIDUAL
+      'farmerName': isCollective
+          ? ''
+          : farmerName, // ✅ Always keep for HYBRID & INDIVIDUAL
       'members': members,
-      'completedCommodities': completedCommodities,
-      'typeOfCrop': typeOfCrop,
-      'variety': variety,
-      'inputsReceived': inputsReceived.map((item) => item.toJson()).toList(),
-      'inputsPurchased': inputsPurchased.map((item) => item.toJson()).toList(),
-      'totalCostPurchased': totalCostPurchased,
-      'qtyVsArea': qtyVsArea,
-      'croppingCycles': croppingCycles,
-      'qtyVsCycles': qtyVsCycles,
-      'peakVolume': peakVolume,
-      'peakMonth': peakMonth,
-      'volumesPerCycle': volumesPerCycle,
-      'farmgatePrice': farmgatePrice,
-      'totalLandArea': totalLandArea,
-      'landOwnership': landOwnership,
-      'landOwnershipOther': landOwnershipOther,
-      'usufructAgreement': usufructAgreement,
-      'landRemarks': landRemarks,
-      'machineryType': machineryType,
-      'machineryOther': machineryOther,
-      'machineryRemarks': machineryRemarks,
-      'landPrepCostPerCycle': landPrepCostPerCycle,
-      'landPrepStartDate': landPrepStartDate,
-      'landPrepDays': landPrepDays,
-      'sourceOfWater': sourceOfWater,
-      'plantingDate': plantingDate,
-      'seedAmount': seedAmount,
-      'seedUnit': seedUnit,
-      'germinationRate': germinationRate,
-      'goodGermination': goodGermination,
-      'germinationReason': germinationReason,
-      'fertilizerType': fertilizerType,
-      'organicSource': organicSource,
-      'organicBagsSAAD': organicBagsSAAD,
-      'organicBagsCommercial': organicBagsCommercial,
-      'organicTotalCost': organicTotalCost,
-      'organicBagsCycle': organicBagsCycle,
-      'organicFrequency': organicFrequency,
-      'inorganicType': inorganicType,
-      'inorganicBagsSAAD': inorganicBagsSAAD,
-      'inorganicMeasure': inorganicMeasure,
-      'inorganicTotalCost': inorganicTotalCost,
-      'inorganicBagsCycle': inorganicBagsCycle,
-      'inorganicFrequency': inorganicFrequency,
-      'pesticideRequirement': pesticideRequirement,
-      'landAreaCycles': landAreaCycles,
-      'dateHarvestCycles': dateHarvestCycles,
-      'quantityCycles': quantityCycles,
-      'avgHarvestPerHa': avgHarvestPerHa,
-      'harvestCostCycles': harvestCostCycles,
-      'foodConsumptionPct': foodConsumptionPct,
-      'postharvestFile': postharvestFile,
-      'postharvestRemarks': postharvestRemarks,
-      'processingFile': processingFile,
-      'processingRemarks': processingRemarks,
-      'hasPest': hasPest,
-      'pestOccurrence': pestOccurrence,
-      'pestDate': pestDate,
-      'pestDamageArea': pestDamageArea,
-      'pestDamageHa': pestDamageHa,
-      'pestTreatment': pestTreatment,
-      'pestAttached': pestAttached,
-      'hasDisease': hasDisease,
-      'diseaseOccurrence': diseaseOccurrence,
-      'diseaseDate': diseaseDate,
-      'diseaseDamageArea': diseaseDamageArea,
-      'diseaseDamageHa': diseaseDamageHa,
-      'diseaseTreatment': diseaseTreatment,
-      'diseaseAttached': diseaseAttached,
-      'hasEnvHazard': hasEnvHazard,
-      'envHazards': envHazards,
-      'envDate': envDate,
-      'envDamageArea': envDamageArea,
-      'envDamageHa': envDamageHa,
-      'envTreatment': envTreatment,
-      'envAttached': envAttached,
-      'hasHumanDamage': hasHumanDamage,
-      'humanDamage': humanDamage,
-      'humanMortality': humanMortality,
-      'humanTreatment': humanTreatment,
-      'humanAttached': humanAttached,
-      'trainings': trainings.map((item) => item.toJson()).toList(),
-      'farmPhoto': farmPhoto,
+      'completedCommodities': isGroupRecord
+          ? []
+          : completedCommodities, // ✅ Empty for HYBRID group records only
+      'typeOfCrop': isGroupRecord
+          ? ''
+          : typeOfCrop, // ✅ Empty for HYBRID group records only
+      'variety':
+          isGroupRecord ? '' : variety, // ✅ Empty for HYBRID group records only
+      'inputsReceived': isGroupRecord
+          ? []
+          : inputsReceived
+              .map((item) => item.toJson())
+              .toList(), // ✅ Empty for HYBRID group
+      'inputsPurchased': isGroupRecord
+          ? []
+          : inputsPurchased
+              .map((item) => item.toJson())
+              .toList(), // ✅ Empty for HYBRID group
+      'totalCostPurchased':
+          isGroupRecord ? '' : totalCostPurchased, // ✅ Empty for HYBRID group
+      'qtyVsArea': isGroupRecord ? '' : qtyVsArea, // ✅ Empty for HYBRID group
+      'croppingCycles':
+          isGroupRecord ? '' : croppingCycles, // ✅ Empty for HYBRID group
+      'qtyVsCycles':
+          isGroupRecord ? '' : qtyVsCycles, // ✅ Empty for HYBRID group
+      'peakVolume': isGroupRecord ? '' : peakVolume, // ✅ Empty for HYBRID group
+      'peakMonth': isGroupRecord ? '' : peakMonth, // ✅ Empty for HYBRID group
+      'volumesPerCycle':
+          isGroupRecord ? [] : volumesPerCycle, // ✅ Empty for group
+      'farmgatePrice': isGroupRecord ? '' : farmgatePrice, // ✅ Empty for group
+      'totalLandArea': isGroupRecord ? '' : totalLandArea, // ✅ Empty for group
+      'landOwnership': isGroupRecord ? null : landOwnership, // ✅ Null for group
+      'landOwnershipOther':
+          isGroupRecord ? '' : landOwnershipOther, // ✅ Empty for group
+      'usufructAgreement':
+          isGroupRecord ? null : usufructAgreement, // ✅ Null for group
+      'landRemarks': isGroupRecord ? [] : landRemarks, // ✅ Empty for group
+      'machineryType': isGroupRecord ? null : machineryType, // ✅ Null for group
+      'machineryOther':
+          isGroupRecord ? '' : machineryOther, // ✅ Empty for group
+      'machineryRemarks':
+          isGroupRecord ? [] : machineryRemarks, // ✅ Empty for group
+      'landPrepCostPerCycle':
+          isGroupRecord ? [] : landPrepCostPerCycle, // ✅ Empty for group
+      'landPrepStartDate':
+          isGroupRecord ? '' : landPrepStartDate, // ✅ Empty for group
+      'landPrepDays': isGroupRecord ? '' : landPrepDays, // ✅ Empty for group
+      'sourceOfWater': isGroupRecord ? '' : sourceOfWater, // ✅ Empty for group
+      'plantingDate': isGroupRecord ? '' : plantingDate, // ✅ Empty for group
+      'seedAmount': isGroupRecord ? '' : seedAmount, // ✅ Empty for group
+      'seedUnit': isGroupRecord ? '' : seedUnit, // ✅ Empty for group
+      'germinationRate':
+          isGroupRecord ? '' : germinationRate, // ✅ Empty for group
+      'goodGermination':
+          isGroupRecord ? '' : goodGermination, // ✅ Empty for group
+      'germinationReason':
+          isGroupRecord ? '' : germinationReason, // ✅ Empty for group
+      'fertilizerType':
+          isGroupRecord ? null : fertilizerType, // ✅ Null for group
+      'organicSource': isGroupRecord ? '' : organicSource, // ✅ Empty for group
+      'organicBagsSAAD':
+          isGroupRecord ? '' : organicBagsSAAD, // ✅ Empty for group
+      'organicBagsCommercial':
+          isGroupRecord ? '' : organicBagsCommercial, // ✅ Empty for group
+      'organicTotalCost':
+          isGroupRecord ? '' : organicTotalCost, // ✅ Empty for group
+      'organicBagsCycle':
+          isGroupRecord ? '' : organicBagsCycle, // ✅ Empty for group
+      'organicFrequency':
+          isGroupRecord ? '' : organicFrequency, // ✅ Empty for group
+      'inorganicType': isGroupRecord ? null : inorganicType, // ✅ Null for group
+      'inorganicBagsSAAD':
+          isGroupRecord ? '' : inorganicBagsSAAD, // ✅ Empty for group
+      'inorganicMeasure':
+          isGroupRecord ? '' : inorganicMeasure, // ✅ Empty for group
+      'inorganicTotalCost':
+          isGroupRecord ? '' : inorganicTotalCost, // ✅ Empty for group
+      'inorganicBagsCycle':
+          isGroupRecord ? '' : inorganicBagsCycle, // ✅ Empty for group
+      'inorganicFrequency':
+          isGroupRecord ? '' : inorganicFrequency, // ✅ Empty for group
+      'pesticideRequirement':
+          isGroupRecord ? '' : pesticideRequirement, // ✅ Empty for group
+      'landAreaCycles':
+          isGroupRecord ? [] : landAreaCycles, // ✅ Empty for group
+      'dateHarvestCycles':
+          isGroupRecord ? [] : dateHarvestCycles, // ✅ Empty for group
+      'quantityCycles':
+          isGroupRecord ? [] : quantityCycles, // ✅ Empty for group
+      'avgHarvestPerHa':
+          isGroupRecord ? '' : avgHarvestPerHa, // ✅ Empty for group
+      'harvestCostCycles':
+          isGroupRecord ? [] : harvestCostCycles, // ✅ Empty for group
+      'foodConsumptionPct':
+          isGroupRecord ? '' : foodConsumptionPct, // ✅ Empty for group
+
+      'processingFile':
+          isGroupRecord ? '' : processingFile, // ✅ Empty for group
+      'processingRemarks':
+          isGroupRecord ? '' : processingRemarks, // ✅ Empty for group
+      'hasPest': isGroupRecord ? null : hasPest, // ✅ Null for group
+      'pestOccurrence':
+          isGroupRecord ? '' : pestOccurrence, // ✅ Empty for group
+      'pestDate': isGroupRecord ? '' : pestDate, // ✅ Empty for group
+      'pestDamageArea':
+          isGroupRecord ? '' : pestDamageArea, // ✅ Empty for group
+      'pestDamageHa': isGroupRecord ? '' : pestDamageHa, // ✅ Empty for group
+      'pestTreatment': isGroupRecord ? '' : pestTreatment, // ✅ Empty for group
+      'pestAttached': isGroupRecord ? '' : pestAttached, // ✅ Empty for group
+      'hasDisease': isGroupRecord ? null : hasDisease, // ✅ Null for group
+      'diseaseOccurrence':
+          isGroupRecord ? '' : diseaseOccurrence, // ✅ Empty for group
+      'diseaseDate': isGroupRecord ? '' : diseaseDate, // ✅ Empty for group
+      'diseaseDamageArea':
+          isGroupRecord ? '' : diseaseDamageArea, // ✅ Empty for group
+      'diseaseDamageHa':
+          isGroupRecord ? '' : diseaseDamageHa, // ✅ Empty for group
+      'diseaseTreatment':
+          isGroupRecord ? '' : diseaseTreatment, // ✅ Empty for group
+      'diseaseAttached':
+          isGroupRecord ? '' : diseaseAttached, // ✅ Empty for group
+      'hasEnvHazard': isGroupRecord ? null : hasEnvHazard, // ✅ Null for group
+      'envHazards': isGroupRecord ? [] : envHazards, // ✅ Empty for group
+      'envDate': isGroupRecord ? '' : envDate, // ✅ Empty for group
+      'envDamageArea': isGroupRecord ? '' : envDamageArea, // ✅ Empty for group
+      'envDamageHa': isGroupRecord ? '' : envDamageHa, // ✅ Empty for group
+      'envTreatment': isGroupRecord ? '' : envTreatment, // ✅ Empty for group
+      'envAttached': isGroupRecord ? '' : envAttached, // ✅ Empty for group
+      'hasHumanDamage':
+          isGroupRecord ? null : hasHumanDamage, // ✅ Null for group
+      'humanDamage': isGroupRecord ? '' : humanDamage, // ✅ Empty for group
+      'humanMortality':
+          isGroupRecord ? '' : humanMortality, // ✅ Empty for group
+      'humanTreatment':
+          isGroupRecord ? '' : humanTreatment, // ✅ Empty for group
+      'humanAttached': isGroupRecord ? '' : humanAttached, // ✅ Empty for group
+      'trainings': isGroupRecord
+          ? []
+          : trainings
+              .map((item) => item.toJson())
+              .toList(), // ✅ Empty for group
+      'farmPhoto': isGroupRecord ? '' : farmPhoto, // ✅ Empty for group
     };
   }
 }

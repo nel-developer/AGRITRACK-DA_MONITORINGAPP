@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../services/monitoring_record_service.dart';
 import '../../services/pending_draft_service.dart';
 import '../../services/user_session_service.dart';
+import '../../services/local_farmer_storage_service.dart';
 import '../../theme/da_colors.dart';
 import '../../widgets/record_card.dart';
 import '../../widgets/search_bar_widget.dart';
@@ -98,6 +100,101 @@ class _DataScreenState extends State<DataScreen>
     final localRecords = allLocalDrafts.map(_mapLocalDraftToRecord).toList();
     _remoteStatusMessage = null;
 
+    // ALSO load unsync records from file system
+    try {
+      final unsyncRecordsFromDisk =
+          await LocalFarmerStorageService.instance.getAllUnsyncRecords();
+
+      // Group unsync records by productionType/groupName
+      final unsyncByGroup = <String, List<Map<String, dynamic>>>{};
+      for (final record in unsyncRecordsFromDisk) {
+        final groupKey = '${record['productionType']}/${record['groupName']}';
+        unsyncByGroup.putIfAbsent(groupKey, () => []).add(record);
+      }
+
+      // Convert grouped unsync records to RecordModel
+      final unsyncModels = <RecordModel>[];
+      for (final groupKey in unsyncByGroup.keys) {
+        final farmerRecords = unsyncByGroup[groupKey] ?? [];
+        final firstRecord = farmerRecords.first;
+
+        final groupName = (firstRecord['groupName'] as String? ?? '').trim();
+        final implType =
+            (firstRecord['implType'] as String? ?? 'individual').toLowerCase();
+        final productionType =
+            firstRecord['productionType'] as String? ?? 'crop';
+
+        // Build membersByFarmerId from all farmers in this group
+        final membersByFarmerId = <String, dynamic>{};
+        for (final farmerRecord in farmerRecords) {
+          final farmerName =
+              (farmerRecord['farmerName'] as String? ?? '').trim();
+          final saadId = (farmerRecord['saadId'] as String? ?? '').trim();
+          final farmerData =
+              (farmerRecord['data'] as Map<String, dynamic>?) ?? {};
+
+          if (farmerName.isNotEmpty && saadId.isNotEmpty) {
+            membersByFarmerId[saadId] = {
+              'name': farmerName,
+              'farmerName': farmerName,
+              'saadIdNo': saadId,
+              ...farmerData,
+            };
+          }
+        }
+
+        // Extract project background data from first farmer record (which has merged group.json data)
+        final firstFarmerData =
+            (firstRecord['data'] as Map<String, dynamic>?) ?? {};
+        final projectBackgroundFields = {
+          // Group/FCA info
+          'fcaName': firstFarmerData['fcaName'] ?? '',
+          'implementationType': firstFarmerData['implementationType'] ?? '',
+          // Project/Location info
+          'projectTitle': firstFarmerData['projectTitle'] ?? '',
+          'reportingPeriod': firstFarmerData['reportingPeriod'] ?? '',
+          'region': firstFarmerData['region'] ?? '',
+          'province': firstFarmerData['province'] ?? '',
+          'municipality': firstFarmerData['municipality'] ?? '',
+          'barangay': firstFarmerData['barangay'] ?? '',
+          // Interventions
+          'primaryIntervention': firstFarmerData['primaryIntervention'] ?? '',
+          'primaryInterventionOther':
+              firstFarmerData['primaryInterventionOther'] ?? '',
+          'supportInterventions': firstFarmerData['supportInterventions'] ?? '',
+          // Members for collective
+          'members': firstFarmerData['members'] ?? [],
+        };
+
+        final unsyncModel = RecordModel(
+          id: groupKey,
+          name: groupName,
+          productionType: productionType,
+          implType: _titleCase(implType),
+          enumerator: 'Offline Profiler',
+          date: _formatDateForModel(DateTime.now()),
+          status: 'unsync',
+          data: {
+            ...projectBackgroundFields,
+            'groupName': groupName,
+            'membersByFarmerId': membersByFarmerId,
+          },
+          isLocal: true,
+        );
+        unsyncModels.add(unsyncModel);
+      }
+
+      // Combine local drafts and unsync records (but avoid duplicates)
+      for (final unsyncModel in unsyncModels) {
+        // Only add if not already in localRecords (by ID)
+        if (!localRecords.any((r) => r.id == unsyncModel.id)) {
+          localRecords.add(unsyncModel);
+        }
+      }
+    } catch (e) {
+      print('❌ Error loading unsync records from disk: $e');
+    }
+
     if (session == null) {
       _remoteStatusMessage = 'Sign in to load and sync records from Firebase.';
       return localRecords;
@@ -139,6 +236,68 @@ class _DataScreenState extends State<DataScreen>
           ? 'No internet connection. Showing local records only.'
           : 'Unable to load pending and approved records from Firebase.';
       return localRecords;
+    }
+  }
+
+  Future<void> _deleteRecord(RecordModel record) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Record'),
+        content: Text(
+            'Are you sure you want to delete "${record.name}"? This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Delete from PendingDraftService (local storage)
+      await PendingDraftService.instance.deleteDraftByLocalId(record.id ?? '');
+
+      // Also delete from file system if it's an unsync folder-based record
+      if (record.status.toLowerCase() == 'unsync' && record.isLocal) {
+        await LocalFarmerStorageService.instance.deleteGroupRecord(
+          productionType: record.productionType.toLowerCase(),
+          groupName: record.name,
+        );
+      }
+
+      // Get updated session and refresh the list
+      final session = await UserSessionService.instance.getCurrentSession();
+      if (mounted) {
+        setState(() {
+          _recordsFuture = _loadRecords(session);
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${record.name} deleted successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -349,6 +508,17 @@ class _DataScreenState extends State<DataScreen>
     );
   }
 
+  String _titleCase(String str) {
+    if (str.isEmpty) return str;
+    return str[0].toUpperCase() + str.substring(1).toLowerCase();
+  }
+
+  String _formatDateForModel(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
   bool _isNetworkError(Object error) {
     final message = error.toString().toLowerCase();
     return message.contains('network-request-failed') ||
@@ -356,6 +526,26 @@ class _DataScreenState extends State<DataScreen>
         message.contains('socketexception') ||
         message.contains('unavailable') ||
         message.contains('network is unreachable');
+  }
+
+  /// ✅ Check if device has active internet connection
+  Future<bool> _hasInternetConnection() async {
+    try {
+      final result = await Connectivity().checkConnectivity();
+      print('📡 Connectivity status: $result');
+
+      // Check if connected to WiFi, Mobile, Ethernet, or VPN
+      final hasConnection = result == ConnectivityResult.wifi ||
+          result == ConnectivityResult.mobile ||
+          result == ConnectivityResult.ethernet ||
+          result == ConnectivityResult.vpn;
+
+      print('   Has connection: $hasConnection');
+      return hasConnection;
+    } catch (e) {
+      print('⚠️ Could not check connectivity: $e');
+      return false;
+    }
   }
 
   Future<void> _handleView(
@@ -376,7 +566,18 @@ class _DataScreenState extends State<DataScreen>
         (record.data?['members'] is List &&
             (record.data?['members'] as List).isNotEmpty);
 
+    print(
+        '🔍 _handleView: record.name=${record.name}, implType=$implType, status=${record.status}');
+    print('   data keys: ${record.data?.keys.toList() ?? "null"}');
+    print(
+        '   membersByFarmerId: ${record.data?['membersByFarmerId'] is Map ? (record.data?['membersByFarmerId'] as Map).length : "not a map"} members');
+    print(
+        '   members: ${record.data?['members'] is List ? (record.data?['members'] as List).length : "not a list"}');
+    print(
+        '   hasMemberData=$hasMemberData, implType matches collective/hybrid: ${implType == 'collective' || implType == 'hybrid'}');
+
     if (implType == 'collective' || implType == 'hybrid' || hasMemberData) {
+      print('   ✅ Going to MemberRecordsScreen');
       await Navigator.push(
         context,
         MaterialPageRoute(
@@ -384,6 +585,7 @@ class _DataScreenState extends State<DataScreen>
         ),
       );
     } else {
+      print('   ✅ Showing modal (old behavior)');
       await showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -412,6 +614,28 @@ class _DataScreenState extends State<DataScreen>
     try {
       if (record.id == null || record.id!.isEmpty) {
         throw Exception('Missing local record id for sync.');
+      }
+
+      // ✅ CHECK INTERNET CONNECTION FIRST
+      print('🔍 Checking internet connection before sync...');
+      final hasInternet = await _hasInternetConnection();
+
+      if (!hasInternet) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No internet connection. Please check your WiFi or mobile data and try again.',
+              style: GoogleFonts.poppins(fontSize: 13),
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        return;
       }
 
       if (!mounted) return;
@@ -448,6 +672,7 @@ class _DataScreenState extends State<DataScreen>
         ),
       );
 
+      print('📤 Starting sync for record: ${record.id}');
       await PendingDraftService.instance.syncDraftByLocalId(record.id!);
 
       if (!mounted) return;
@@ -469,6 +694,8 @@ class _DataScreenState extends State<DataScreen>
         _recordsFuture = _loadRecords(_activeSession);
       });
     } catch (error) {
+      print('❌ SYNC ERROR: $error');
+      print('   Error type: ${error.runtimeType}');
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -701,6 +928,7 @@ class _DataScreenState extends State<DataScreen>
                                   tabColor: statusColor('unsync'),
                                   hPad: hPad,
                                   emptyMessage: 'No unsynced records found',
+                                  onDelete: _deleteRecord,
                                   locked: false,
                                   lockMsg: '',
                                   onView: (ctx, r) => _handleView(
@@ -733,19 +961,23 @@ class _DataScreenState extends State<DataScreen>
                                   hPad: hPad,
                                   emptyMessage: remoteStatusMessage ??
                                       'No pending records found',
+                                  onDelete: _deleteRecord,
                                   locked: false,
                                   lockMsg: '',
                                   onView: (ctx, r) {
                                     // For local pending records, show approve/decline without moderator check
                                     final isLocalPending =
                                         r.isLocal && r.status == 'pending';
+                                    final isModeratorOrAdmin = isModerator ||
+                                        (_activeSession?.isAdmin ?? false);
                                     _handleView(
                                       ctx,
                                       r,
                                       showApprove:
-                                          isModerator || isLocalPending,
-                                      approveLocked:
-                                          isModerator ? false : !isLocalPending,
+                                          isModeratorOrAdmin || isLocalPending,
+                                      approveLocked: isModeratorOrAdmin
+                                          ? false
+                                          : !isLocalPending,
                                       onApprove: () => _updateReviewStatus(
                                           r, 'approved',
                                           isModerator: isModerator,
@@ -767,6 +999,7 @@ class _DataScreenState extends State<DataScreen>
                                   hPad: hPad,
                                   emptyMessage: remoteStatusMessage ??
                                       'No approved records found',
+                                  onDelete: _deleteRecord,
                                   locked: false,
                                   lockMsg: '',
                                   onView: (ctx, r) => _handleView(
@@ -835,6 +1068,7 @@ class _TabContent extends StatelessWidget {
     required this.hPad,
     required this.onView,
     required this.emptyMessage,
+    this.onDelete,
     this.locked = false,
     this.lockMsg = '',
   });
@@ -843,6 +1077,7 @@ class _TabContent extends StatelessWidget {
   final Color tabColor;
   final double hPad;
   final _OnView onView;
+  final Function(RecordModel)? onDelete;
   final String emptyMessage;
   final bool locked;
   final String lockMsg;
@@ -877,6 +1112,7 @@ class _TabContent extends StatelessWidget {
                     record: r,
                     tabColor: tabColor,
                     onTap: () => onView(ctx, r),
+                    onDelete: onDelete != null ? () => onDelete!(r) : null,
                   ),
                   if (showSync || showApprove)
                     _ActionRow(

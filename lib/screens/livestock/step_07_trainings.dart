@@ -201,7 +201,9 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
             '✅ Stored collective data directly at root level: ${batches.length} batches, ${w.trainings.length} trainings');
       }
       // Case 3: Individual record with single farmer
-      else if (farmerName.isNotEmpty && batches.isNotEmpty) {
+      // ✅ CRITICAL: Include individual farmers even if they have NO batches yet
+      // In-progress individuals must still sync to preserve their data
+      else if (farmerName.isNotEmpty) {
         final memberId = saadIdNo.isNotEmpty ? saadIdNo : farmerName;
         membersByFarmerId[memberId] = {
           'name': farmerName,

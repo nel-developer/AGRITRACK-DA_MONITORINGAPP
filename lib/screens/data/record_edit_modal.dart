@@ -208,6 +208,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
   late final bool _isCollective;
   late final String _commodityListKey;
   late final List<String> _commodityFieldKeys;
+  late int _selectedCommodityIndex;
   bool _isSaving = false;
 
   @override
@@ -230,6 +231,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
             .toList() ??
         [];
 
+    _selectedCommodityIndex = 0;
     _itemControllers = {};
     final shouldCreateItemControllers = _originalCommodityItems.isNotEmpty &&
         (_isCollective || !widget.isGroup);
@@ -257,12 +259,14 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
       'primaryIntervention',
     };
 
-    if (!_isCollective) {
+    // Farmer editing their own record: show commodity keys only
+    if (widget.isMemberEditOnly && !widget.isGroup) {
+      editableKeys =
+          editableKeys.where((key) => !backgroundKeys.contains(key)).toList();
+    }
+    // Group record or collective: show background keys only
+    else if (widget.isGroup || _isCollective) {
       editableKeys = editableKeys.where(backgroundKeys.contains).toList();
-    } else {
-      editableKeys = editableKeys
-          .where((key) => !_commodityFieldKeys.contains(key))
-          .toList();
     }
 
     _controllers = {
@@ -294,6 +298,21 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
         ].where((part) => part.isNotEmpty).join(' | ');
       }).join('\n');
     }
+    if (key == 'inputsReceived' || key == 'inputsPurchased') {
+      final inputs = (_originalData[key] as List?) ?? const [];
+      if (inputs.isEmpty) return '(None recorded)';
+      return inputs.map((item) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final inputName = row['inputName']?.toString() ?? 'Input';
+        final quantity = row['quantity']?.toString() ?? '';
+        final cost = row['cost']?.toString() ?? '';
+        return [
+          inputName,
+          if (quantity.isNotEmpty) '$quantity qty',
+          if (cost.isNotEmpty) '₱$cost'
+        ].where((part) => part.isNotEmpty).join(' • ');
+      }).join('\n');
+    }
     final value = _originalData[key];
     if (value == null) return '';
     if (value is List) return value.join(', ');
@@ -312,6 +331,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'barangay',
           'projectTitle',
           'primaryIntervention',
+          'supportInterventions',
           'farmerName',
           'typeOfCrop',
           'variety',
@@ -360,8 +380,6 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'avgHarvestPerHa',
           'harvestCostCycles',
           'foodConsumptionPct',
-          'postharvestRemarks',
-          'processingRemarks',
           // Crop damage fields
           'pestOccurrence',
           'pestDate',
@@ -392,6 +410,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'barangay',
           'projectTitle',
           'primaryIntervention',
+          'supportInterventions',
           'farmerName',
           'breed',
           'stocksReceived',
@@ -415,6 +434,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'barangay',
           'projectTitle',
           'primaryIntervention',
+          'supportInterventions',
           'farmerName',
           'breed',
           'stocksReceived',
@@ -590,8 +610,6 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'avgHarvestPerHa',
           'harvestCostCycles',
           'foodConsumptionPct',
-          'postharvestRemarks',
-          'processingRemarks',
           'pestOccurrence',
           'pestDate',
           'pestDamageArea',
@@ -646,6 +664,8 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
     switch (key) {
       case 'fcaName':
         return 'FCA Name';
+      case 'supportInterventions':
+        return 'Support Interventions';
       case 'typeOfCrop':
         return 'Type of Crop';
       case 'farmgatePrice':
@@ -654,6 +674,10 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
         return 'Quantity vs Area';
       case 'peakVolume':
         return 'Peak Volume';
+      case 'inputsReceived':
+        return 'Inputs Received from FCA';
+      case 'inputsPurchased':
+        return 'Inputs Purchased by Farmer';
       case 'totalLandArea':
         return 'Total Land Area';
       case 'landOwnership':
@@ -766,10 +790,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
         return 'Harvest Cost Cycles';
       case 'foodConsumptionPct':
         return 'Food Consumption %';
-      case 'postharvestRemarks':
-        return 'Postharvest Remarks';
-      case 'processingRemarks':
-        return 'Processing Remarks';
+
       // Crop damage labels
       case 'pestOccurrence':
         return 'Pest Occurrence';
@@ -833,6 +854,12 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
             .toList();
         updates['trainings'] = lines
             .map((line) => {'name': line, 'date': '', 'attendees': ''})
+            .toList();
+      } else if (entry.key == 'supportInterventions') {
+        updates['supportInterventions'] = entry.value.text
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
             .toList();
       } else {
         updates[entry.key] = entry.value.text.trim();
@@ -902,20 +929,27 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
       'barangay',
       'projectTitle',
       'primaryIntervention',
+      'supportInterventions',
     };
 
-    final keys = !_isCollective
-        ? allKeys.where(backgroundKeys.contains).toList()
-        : allKeys.where((key) => !_commodityFieldKeys.contains(key)).toList();
+    // Farmer editing their own record: show commodity keys only
+    final keys = widget.isMemberEditOnly && !widget.isGroup
+        ? allKeys.where((key) => !backgroundKeys.contains(key)).toList()
+        : widget.isGroup || _isCollective
+            ? allKeys.where(backgroundKeys.contains).toList()
+            : allKeys
+                .where((key) => !_commodityFieldKeys.contains(key))
+                .toList();
 
+    // Show commodity section for: (collective OR farmer editing own record) AND has items
     final showCommoditySection = _originalCommodityItems.isNotEmpty &&
-        (_isCollective || !widget.isGroup);
+        (_isCollective || (widget.isMemberEditOnly && !widget.isGroup));
 
     if (type == 'crop') {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildCropSections(keys),
+          if (keys.isNotEmpty) _buildCropSections(keys),
           if (showCommoditySection) _buildCommodityEditorSection(type),
         ],
       );
@@ -924,7 +958,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionHeader(title: 'Edit Record'),
+        if (keys.isNotEmpty) const _SectionHeader(title: 'Edit Record'),
         ...keys.map((key) => Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Column(
@@ -956,7 +990,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 16),
+          if (widget.isMemberEditOnly) const SizedBox(height: 8),
           _SectionHeader(title: title),
           Padding(
             padding: const EdgeInsets.only(top: 16),
@@ -975,41 +1009,48 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
       children: [
         const SizedBox(height: 16),
         _SectionHeader(title: title),
-        ..._originalCommodityItems.asMap().entries.map((entry) {
-          final index = entry.key;
-          final item = entry.value;
-          final subtitle = type == 'crop'
-              ? [
-                  item['typeOfCrop']?.toString().trim() ?? '',
-                  item['variety']?.toString().trim() ?? '',
-                ].where((part) => part.isNotEmpty).join(' · ')
-              : (() {
-                  final breed = item['breed']?.toString().trim() ?? '';
-                  return breed.isNotEmpty ? breed : 'Batch details';
-                })();
-
-          return ExpansionTile(
-            key: ValueKey('edit_${type}_$index'),
-            title: Text(
-              item['commodityId']?.toString().isNotEmpty ?? false
-                  ? '${item['commodityId']} ($itemLabel)'
-                  : '$itemLabel ${index + 1}',
-              style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: DAColors.textDark),
-            ),
-            subtitle: Text(
-              subtitle,
-              style:
-                  GoogleFonts.poppins(fontSize: 12, color: DAColors.textMuted),
-            ),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            children: type == 'crop'
-                ? _buildCropItemSections(type, index)
-                : _buildGenericItemFields(type, index),
-          );
-        }),
+        // Commodity selector dropdown
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _lbl('Select $itemLabel to Edit'),
+              DropdownButtonFormField<int>(
+                initialValue: _selectedCommodityIndex,
+                items: _originalCommodityItems.asMap().entries.map((entry) {
+                  final idx = entry.key;
+                  final item = entry.value;
+                  final displayText = type == 'crop'
+                      ? '${item['typeOfCrop']?.toString().trim() ?? 'Commodity'} · ${item['variety']?.toString().trim() ?? ''}'
+                      : '${item['breed']?.toString().trim() ?? 'Batch'} ${idx + 1}';
+                  return DropdownMenuItem(
+                    value: idx,
+                    child: Text(
+                      displayText,
+                      style: GoogleFonts.poppins(fontSize: 13),
+                    ),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() => _selectedCommodityIndex = val);
+                  }
+                },
+                decoration: _fieldDeco('Choose $itemLabel'),
+              ),
+            ],
+          ),
+        ),
+        // Show only selected commodity
+        if (_selectedCommodityIndex < _originalCommodityItems.length)
+          type == 'crop'
+              ? Column(
+                  children:
+                      _buildCropItemSections(type, _selectedCommodityIndex))
+              : Column(
+                  children:
+                      _buildGenericItemFields(type, _selectedCommodityIndex)),
       ],
     );
   }
@@ -1026,6 +1067,8 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'qtyVsArea',
           'croppingCycles',
           'peakVolume',
+          'inputsReceived',
+          'inputsPurchased',
         ]
       },
       {
@@ -1130,19 +1173,42 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
 
   Widget _buildItemField(String type, int index, String field) {
     final fieldKey = '${type}_${index}_$field';
+    final isInputField =
+        field == 'inputsReceived' || field == 'inputsPurchased';
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _lbl(_labelFor(field)),
-          TextFormField(
-            controller: _itemControllers[fieldKey],
-            enabled: !_isSaving,
-            maxLines: 1,
-            style: GoogleFonts.poppins(fontSize: 14, color: DAColors.textDark),
-            decoration: _fieldDeco('Enter ${_labelFor(field)}'),
-          ),
+          if (isInputField)
+            // Display inputs as read-only since they're complex structures
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                border: Border.all(color: Colors.grey[300]!),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _itemControllers[fieldKey]?.text ?? '(None recorded)',
+                style: GoogleFonts.poppins(
+                  fontSize: 13,
+                  color: DAColors.textMuted,
+                  height: 1.5,
+                ),
+              ),
+            )
+          else
+            TextFormField(
+              controller: _itemControllers[fieldKey],
+              enabled: !_isSaving,
+              maxLines: 1,
+              style:
+                  GoogleFonts.poppins(fontSize: 14, color: DAColors.textDark),
+              decoration: _fieldDeco('Enter ${_labelFor(field)}'),
+            ),
         ],
       ),
     );
@@ -1161,6 +1227,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           'barangay',
           'projectTitle',
           'primaryIntervention',
+          'supportInterventions',
         ]
       },
       {

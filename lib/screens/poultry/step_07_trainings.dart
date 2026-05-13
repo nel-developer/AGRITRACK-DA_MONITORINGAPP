@@ -201,7 +201,9 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
             '✅ Stored collective data directly at root level: ${commodities.length} commodities, ${w.trainings.length} trainings');
       }
       // Case 3: Individual record with single farmer
-      else if (farmerName.isNotEmpty && commodities.isNotEmpty) {
+      // ✅ CRITICAL: Include individual farmers even if they have NO commodities yet
+      // In-progress individuals must still sync to preserve their data
+      else if (farmerName.isNotEmpty) {
         final memberId = saadIdNo.isNotEmpty ? saadIdNo : farmerName;
         membersByFarmerId[memberId] = {
           'name': farmerName,

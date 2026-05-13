@@ -329,12 +329,6 @@ class _PoultryStep1State extends State<PoultryStep1ProjectBackground> {
     'Others',
   ];
 
-  static const _purposeOptions = [
-    'Breeding',
-    'Meat / Broiler',
-    'Egg / Layer',
-  ];
-
   bool _canProceed() {
     return c.reportingPeriod.isNotEmpty &&
         c.fcaName.isNotEmpty &&
@@ -343,24 +337,7 @@ class _PoultryStep1State extends State<PoultryStep1ProjectBackground> {
         c.municipality != null &&
         c.barangay != null &&
         c.projectTitle.isNotEmpty &&
-        c.primaryIntervention != null &&
-        (c.purposeBreeding || c.purposeMeat || c.purposeEgg);
-  }
-
-  // Map dropdown value → wrapper booleans
-  String? get _purposeValue {
-    if (c.purposeBreeding) return 'Breeding';
-    if (c.purposeMeat) return 'Meat / Broiler';
-    if (c.purposeEgg) return 'Egg / Layer';
-    return null;
-  }
-
-  void _setPurpose(String? v) {
-    setState(() {
-      c.purposeBreeding = v == 'Breeding';
-      c.purposeMeat = v == 'Meat / Broiler';
-      c.purposeEgg = v == 'Egg / Layer';
-    });
+        c.primaryIntervention != null;
   }
 
   void _next() {
@@ -376,13 +353,8 @@ class _PoultryStep1State extends State<PoultryStep1ProjectBackground> {
     c.supportInterventions =
         _supportInterventions.where((s) => s.trim().isNotEmpty).toList();
 
-    // For collective records, skip individual farmer fields and go to commodity management
-    if (c.implementationType?.toLowerCase() == 'collective') {
-      Navigator.of(context)
-          .pushNamed(AppRoutes.poultryMonitoringSummary, arguments: c);
-    } else {
-      Navigator.of(context).pushNamed(AppRoutes.poultryStep2, arguments: c);
-    }
+    // All implementation types (individual, collective, hybrid) go through Step 2
+    Navigator.of(context).pushNamed(AppRoutes.poultryStep2, arguments: c);
   }
 
   @override
@@ -583,17 +555,6 @@ class _PoultryStep1State extends State<PoultryStep1ProjectBackground> {
                     color: DAColors.greenMid)),
           ]),
         ),
-        const SizedBox(height: 20),
-
-        // ── Purpose of Production — dropdown ──────────────────
-        CropDropdown(
-          label: 'Purpose of Production',
-          hint: 'Choose',
-          value: _purposeValue,
-          items: _purposeOptions,
-          onChanged: _setPurpose,
-        ),
-
         const SizedBox(height: 32),
       ],
     );

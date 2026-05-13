@@ -45,8 +45,33 @@ class PendingDraftService {
   }
 
   Future<void> clearAllDrafts() async {
+    // Get all unsync records from folders and delete them
+    try {
+      final unsyncRecords =
+          await LocalFarmerStorageService.instance.getAllUnsyncRecords();
+      for (final record in unsyncRecords) {
+        final productionType =
+            (record['productionType'] as String? ?? '').toLowerCase();
+        final groupName = (record['groupName'] as String? ?? '').trim();
+
+        if (productionType.isNotEmpty && groupName.isNotEmpty) {
+          try {
+            await LocalFarmerStorageService.instance
+                .deleteRecord(productionType, groupName);
+            print('✅ Deleted unsync folder: $groupName/$productionType');
+          } catch (e) {
+            print('⚠️ Failed to delete folder for $groupName: $e');
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ Failed to retrieve unsync records for deletion: $e');
+    }
+
+    // Also clear from SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_storageKey);
+    print('✅ Cleared all drafts from storage');
   }
 
   PendingDraftService._();
@@ -90,11 +115,10 @@ class PendingDraftService {
         ((data['membersByFarmerId'] as Map?)?.isNotEmpty == true) ||
             ((data['members'] as List?)?.isNotEmpty == true);
 
-    // CRITICAL: Detect group-like drafts even for individual UI flow.
-    // This fixes add-farmer behavior where the record still contains a members map.
+    // CRITICAL: Explicitly treat explicit individual records as individual
+    // even if they contain a members structure from the UI.
     final isGroupRecord = normalizedImplementationType == 'collective' ||
-        normalizedImplementationType == 'hybrid' ||
-        hasGroupMembers;
+        normalizedImplementationType == 'hybrid';
     if (normalizedImplementationType == 'collective') {
       final fcaName = (data['fcaName'] as String?)?.trim() ?? '';
       data = {
@@ -149,14 +173,12 @@ class PendingDraftService {
           ((draftData['membersByFarmerId'] as Map?)?.isNotEmpty == true) ||
               ((draftData['members'] as List?)?.isNotEmpty == true);
       final draftIsGroup = draftImplementationType == 'collective' ||
-          draftImplementationType == 'hybrid' ||
-          draftHasGroupMembers;
+          draftImplementationType == 'hybrid';
       final dataHasGroupMembers =
           ((data['membersByFarmerId'] as Map?)?.isNotEmpty == true) ||
               ((data['members'] as List?)?.isNotEmpty == true);
       final dataIsGroup = normalizedImplementationType == 'collective' ||
-          normalizedImplementationType == 'hybrid' ||
-          dataHasGroupMembers;
+          normalizedImplementationType == 'hybrid';
       print(
           '   draftImplementationType: $draftImplementationType, normalizedImplementationType: $normalizedImplementationType');
       print(
@@ -248,6 +270,21 @@ class PendingDraftService {
       print('      draft farmerName="$draftFarmerName" saadId="$draftSaadId"');
       print('      new   farmerName="$dataFarmerName" saadId="$dataSaadId"');
 
+      // ✅ FIX: Both are individual records sharing the same FCA/period/project
+      // = same group of individually-managed farmers → merge into one draft.
+      // Strict: NEVER matches collective ↔ individual.
+      if (draftImplementationType == 'individual' &&
+          normalizedImplementationType == 'individual' &&
+          draftHasGroupMembers &&
+          dataHasGroupMembers &&
+          draftFcaName == dataFcaName &&
+          draftReportingPeriod == dataReportingPeriod &&
+          draftProjectTitle == dataProjectTitle) {
+        print(
+            '   ✅ MATCH! (individual group: same FCA/period/project, both have members)');
+        return true;
+      }
+
       final sameSaad = draftSaadId.isNotEmpty &&
           dataSaadId.isNotEmpty &&
           draftSaadId == dataSaadId;
@@ -255,7 +292,20 @@ class PendingDraftService {
           dataFarmerName.isNotEmpty &&
           draftFarmerName == dataFarmerName;
 
-      if (sameSaad || sameFarmerName) {
+      print('      sameSaad=$sameSaad, sameFarmerName=$sameFarmerName');
+
+      // NEW: Fallback match group draft by FCA + period + project
+      // when adding an individual farmer into an existing group record.
+      if (draftIsGroup &&
+          !dataIsGroup &&
+          draftFcaName == dataFcaName &&
+          draftReportingPeriod == dataReportingPeriod &&
+          draftProjectTitle == dataProjectTitle) {
+        print('   ✅ MATCH! (group fallback by FCA/period/project)');
+        return true;
+      }
+
+      if (sameSaad && sameFarmerName) {
         print('   ✅ MATCH! (same individual farmer)');
         return true;
       }
@@ -282,10 +332,11 @@ class PendingDraftService {
                   true) ||
               ((existingDraftData['members'] as List?)?.isNotEmpty == true);
       final existingIsGroup = existingImplementationType == 'collective' ||
-          existingImplementationType == 'hybrid' ||
-          existingHasGroupMembers;
+          existingImplementationType == 'hybrid';
       final incomingIsGroup = isGroupRecord;
-      final shouldTreatAsGroup = existingIsGroup || incomingIsGroup;
+      final shouldTreatAsGroup = existingIsGroup ||
+          incomingIsGroup ||
+          (existingHasGroupMembers && hasGroupMembers);
 
       final resolvedImplementationType = shouldTreatAsGroup
           ? (existingIsGroup
@@ -324,13 +375,24 @@ class PendingDraftService {
         'status': status,
         'updatedLocallyAt': DateTime.now().toIso8601String(),
       };
-      await writeDrafts(drafts);
+
+      print('   ✍️ Writing updated draft to storage...');
+      try {
+        await writeDrafts(drafts);
+        print('   ✅ Draft overwritten successfully');
+      } catch (e) {
+        print('   ❌ ERROR writing draft to storage: $e');
+        print('   This might be a storage permission or device issue');
+        rethrow;
+      }
       _notifyDraftsUpdated();
 
       // For collectives and hybrid group records, save each farmer's data to their own folder
-      final shouldSaveAsGroupRecord = shouldTreatAsGroup ||
-          resolvedImplementationType == 'collective' ||
-          resolvedImplementationType == 'hybrid';
+      // CRITICAL: Never treat individual farmers as group records, even if they have members data
+      final shouldSaveAsGroupRecord = (shouldTreatAsGroup ||
+              resolvedImplementationType == 'collective' ||
+              resolvedImplementationType == 'hybrid') &&
+          resolvedImplementationType != 'individual';
 
       if (shouldSaveAsGroupRecord) {
         final groupMembersForSave = (mergedData['members'] as List?) ?? [];
@@ -348,16 +410,46 @@ class PendingDraftService {
           data: mergedData,
         );
       } else if (resolvedImplementationType == 'individual') {
-        // For individual, save farmer's own data to folder
-        print(
-            '👤 INDIVIDUAL RECORD - About to save folder for ${mergedData['farmerName']}');
-        await saveSingleFarmerData(
-          productionType: normalizedProductionType,
-          groupName: mergedData['fcaName'] as String? ?? 'Unknown Group',
-          farmerName: mergedData['farmerName'] as String? ?? 'Unknown Farmer',
-          saadId: mergedData['saadIdNo'] as String? ?? 'NoSAAD',
-          data: mergedData,
-        );
+        // ✅ FIX: For each farmer in membersByFarmerId, save their own folder
+        // Do NOT use mergedData['farmerName'] — that may be stale from a previous farmer
+        final membersToSave = mergedData['membersByFarmerId'] as Map? ?? {};
+        if (membersToSave.isEmpty) {
+          // Fallback for truly individual with no group
+          final farmerName =
+              mergedData['farmerName'] as String? ?? 'Unknown Farmer';
+          final saadId = mergedData['saadIdNo'] as String? ?? 'NoSAAD';
+          print('👤 INDIVIDUAL RECORD - Saving folder for $farmerName');
+          await saveSingleFarmerData(
+            productionType: normalizedProductionType,
+            groupName: mergedData['fcaName'] as String? ?? 'Unknown Group',
+            farmerName: farmerName,
+            saadId: saadId,
+            data: mergedData,
+          );
+        } else {
+          // ✅ Save each farmer in membersByFarmerId to their own folder
+          for (final entry in membersToSave.entries) {
+            final memberId = entry.key as String;
+            final memberData = entry.value is Map
+                ? Map<String, dynamic>.from(entry.value as Map)
+                : <String, dynamic>{};
+            final farmerName = (memberData['farmerName'] as String? ??
+                    memberData['name'] as String? ??
+                    '')
+                .trim();
+            final saadId = memberId;
+            if (farmerName.isEmpty && saadId.isEmpty) continue;
+            print(
+                '👤 INDIVIDUAL RECORD - Saving folder for $farmerName ($saadId)');
+            await saveSingleFarmerData(
+              productionType: normalizedProductionType,
+              groupName: mergedData['fcaName'] as String? ?? 'Unknown Group',
+              farmerName: farmerName,
+              saadId: saadId,
+              data: mergedData,
+            );
+          }
+        }
       }
     } else {
       // Create new draft
@@ -365,7 +457,19 @@ class PendingDraftService {
       print('   This might overwrite old data if FCA/period/project match!');
       print(
           '   Searched for: $normalizedProductionType / $normalizedImplementationType / ${data['fcaName']}');
-      localId = DateTime.now().microsecondsSinceEpoch.toString();
+
+      // ✅ FIX: For group records (collective/hybrid), use productionType/groupName as localId
+      // This matches the groupKey format used in member_records_screen.dart
+      // For individual records, use timestamp-based localId
+      if (isGroupRecord && normalizedImplementationType != 'individual') {
+        final groupName = (data['fcaName'] as String? ?? 'Unknown').trim();
+        localId = '$normalizedProductionType/$groupName';
+        print('   📍 Group record: localId set to "$localId"');
+      } else {
+        localId = DateTime.now().microsecondsSinceEpoch.toString();
+        print('   📍 Individual record: localId set to "$localId"');
+      }
+
       drafts.add({
         'localId': localId,
         'fileName': fileName,
@@ -376,11 +480,21 @@ class PendingDraftService {
         'status': status,
         'savedLocallyAt': DateTime.now().toIso8601String(),
       });
-      await writeDrafts(drafts);
+
+      print('   ✍️ Writing new draft to storage...');
+      try {
+        await writeDrafts(drafts);
+        print('   ✅ New draft saved successfully');
+      } catch (e) {
+        print('   ❌ ERROR saving new draft: $e');
+        print('   This might be a storage permission or device issue');
+        rethrow;
+      }
       _notifyDraftsUpdated();
 
       // For collectives and hybrid group records, save each farmer's data to their own folder
-      if (isGroupRecord) {
+      // CRITICAL: Never treat individual farmers as group records, even if they have members data
+      if (isGroupRecord && normalizedImplementationType != 'individual') {
         final groupMembersForSave = (data['members'] as List?) ?? [];
         print(
             '📂 NEW GROUP RECORD - About to save local folders for ${groupMembersForSave.length} farmers');
@@ -396,16 +510,45 @@ class PendingDraftService {
           data: data,
         );
       } else if (normalizedImplementationType == 'individual') {
-        // For individual, save farmer's own data to folder
-        print(
-            '👤 NEW INDIVIDUAL RECORD - About to save folder for ${data['farmerName']}');
-        await saveSingleFarmerData(
-          productionType: normalizedProductionType,
-          groupName: data['fcaName'] as String? ?? 'Unknown Group',
-          farmerName: data['farmerName'] as String? ?? 'Unknown Farmer',
-          saadId: data['saadIdNo'] as String? ?? 'NoSAAD',
-          data: data,
-        );
+        // ✅ FIX: For each farmer in membersByFarmerId, save their own folder
+        // Do NOT use data['farmerName'] — that may be stale from a previous farmer
+        final membersToSave = data['membersByFarmerId'] as Map? ?? {};
+        if (membersToSave.isEmpty) {
+          // Fallback for truly individual with no group
+          final farmerName = data['farmerName'] as String? ?? 'Unknown Farmer';
+          final saadId = data['saadIdNo'] as String? ?? 'NoSAAD';
+          print('👤 NEW INDIVIDUAL RECORD - Saving folder for $farmerName');
+          await saveSingleFarmerData(
+            productionType: normalizedProductionType,
+            groupName: data['fcaName'] as String? ?? 'Unknown Group',
+            farmerName: farmerName,
+            saadId: saadId,
+            data: data,
+          );
+        } else {
+          // ✅ Save each farmer in membersByFarmerId to their own folder
+          for (final entry in membersToSave.entries) {
+            final memberId = entry.key as String;
+            final memberData = entry.value is Map
+                ? Map<String, dynamic>.from(entry.value as Map)
+                : <String, dynamic>{};
+            final farmerName = (memberData['farmerName'] as String? ??
+                    memberData['name'] as String? ??
+                    '')
+                .trim();
+            final saadId = memberId;
+            if (farmerName.isEmpty && saadId.isEmpty) continue;
+            print(
+                '👤 NEW INDIVIDUAL RECORD - Saving folder for $farmerName ($saadId)');
+            await saveSingleFarmerData(
+              productionType: normalizedProductionType,
+              groupName: data['fcaName'] as String? ?? 'Unknown Group',
+              farmerName: farmerName,
+              saadId: saadId,
+              data: data,
+            );
+          }
+        }
       }
     }
 
@@ -528,6 +671,7 @@ class PendingDraftService {
           'updatedLocallyAt': DateTime.now().toIso8601String(),
         };
         await writeDrafts(drafts);
+        _notifyDraftsUpdated();
         return;
       }
     }
@@ -536,36 +680,263 @@ class PendingDraftService {
   }
 
   Future<void> syncDraftByLocalId(String localId) async {
-    final drafts = await readDrafts();
-    final remainingDrafts = <Map<String, dynamic>>[];
-    Map<String, dynamic>? targetDraft;
+    try {
+      print('🔍 syncDraftByLocalId: Looking for draft with localId=$localId');
+      final drafts = await readDrafts();
+      print('   Total drafts in local storage: ${drafts.length}');
 
-    for (final draft in drafts) {
-      if (draft['localId'] == localId) {
-        targetDraft = draft;
-      } else {
-        remainingDrafts.add(draft);
+      final remainingDrafts = <Map<String, dynamic>>[];
+      Map<String, dynamic>? targetDraft;
+
+      for (final draft in drafts) {
+        if (draft['localId'] == localId) {
+          targetDraft = draft;
+          print('   ✅ Found target draft');
+        } else {
+          remainingDrafts.add(draft);
+        }
       }
+
+      // ✅ FALLBACK: If draft not in SharedPreferences, try to load from folder structure
+      if (targetDraft == null) {
+        print(
+            '   ⚠️ Draft not found in SharedPreferences, attempting to load from folders...');
+        // localId format: "productionType/groupName" e.g., "crop/holy"
+        final parts = localId.split('/');
+        if (parts.length == 2) {
+          final productionType = parts[0];
+          final groupName = parts[1];
+          print('   📂 Trying to load from: $productionType/$groupName');
+
+          // Try to load group data from folders
+          final groupData =
+              await LocalFarmerStorageService.instance.getGroupData(
+            productionType: productionType,
+            groupName: groupName,
+          );
+
+          if (groupData != null) {
+            print('   ✅ Loaded group data from folders');
+
+            // ✅ Transform members array to membersByFarmerId map (old group.json format)
+            Map<String, dynamic> transformedData =
+                Map<String, dynamic>.from(groupData);
+
+            if (groupData['members'] != null && groupData['members'] is List) {
+              final membersList =
+                  List<dynamic>.from(groupData['members'] as List);
+              final membersByFarmerId = <String, dynamic>{};
+
+              for (final member in membersList) {
+                if (member is Map<String, dynamic>) {
+                  final name = member['name'] as String? ??
+                      member['farmerName'] as String? ??
+                      '';
+                  final saadId = member['saadIdNo'] as String? ??
+                      member['saadId'] as String? ??
+                      '';
+                  final memberId = saadId.isNotEmpty ? saadId : name;
+
+                  if (memberId.isNotEmpty) {
+                    membersByFarmerId[memberId] = {
+                      'farmerName': name,
+                      'name': name,
+                      'saadIdNo': saadId,
+                    };
+                  }
+                }
+              }
+
+              transformedData['membersByFarmerId'] = membersByFarmerId;
+              print(
+                  '   📋 Transformed ${membersList.length} members to membersByFarmerId map');
+
+              // ✅ CRITICAL: Load farmer-specific commodities from subfolders
+              // This ensures commodities have the correct saadIdNo
+              final allFarmerCommodities = <Map<String, dynamic>>[];
+              for (final saadId in membersByFarmerId.keys) {
+                final member =
+                    membersByFarmerId[saadId] as Map<String, dynamic>;
+                final farmerName = member['farmerName'] as String? ?? '';
+
+                print('   🔍 Attempting to load farmer data:');
+                print('      saadId: $saadId');
+                print('      farmerName: "$farmerName"');
+                print('      groupName: "$groupName"');
+                print('      productionType: "$productionType"');
+
+                // Try to get farmer data from folder
+                try {
+                  final farmerData =
+                      await LocalFarmerStorageService.instance.getFarmerData(
+                    productionType: productionType,
+                    groupName: groupName,
+                    farmerName: farmerName,
+                    saadId: saadId,
+                  );
+
+                  print(
+                      '   getFarmerData returned: ${farmerData != null ? "DATA" : "NULL"}');
+
+                  if (farmerData != null) {
+                    final farmerCommodities =
+                        farmerData['completedCommodities'] as List? ?? [];
+                    final farmerTrainings =
+                        farmerData['trainings'] as List? ?? [];
+
+                    print(
+                        '   📂 Loaded ${farmerCommodities.length} commodities and ${farmerTrainings.length} trainings for farmer: $farmerName ($saadId)');
+
+                    // Update membersByFarmerId with trainings from the farmer's data
+                    membersByFarmerId[saadId] = {
+                      'farmerName': farmerName,
+                      'name': farmerName,
+                      'saadIdNo': saadId,
+                      'trainings': farmerTrainings,
+                    };
+
+                    // Ensure each commodity has the farmer's saadIdNo set
+                    for (final commodity in farmerCommodities) {
+                      if (commodity is Map<String, dynamic>) {
+                        commodity['saadIdNo'] = saadId;
+                        commodity['farmerName'] = farmerName;
+                        allFarmerCommodities.add(commodity);
+                      }
+                    }
+                  } else {
+                    print(
+                        '   ⚠️ No data.json found for farmer: $farmerName ($saadId)');
+                  }
+                } catch (e) {
+                  print('   ❌ ERROR loading farmer data: $e');
+                  print('      StackTrace: $e');
+                }
+              }
+
+              // Replace completedCommodities with farmer-specific ones
+              if (allFarmerCommodities.isNotEmpty) {
+                transformedData['completedCommodities'] = allFarmerCommodities;
+                print(
+                    '   ✅ Merged ${allFarmerCommodities.length} farmer-specific commodities');
+              }
+            }
+
+            targetDraft = {
+              'localId': localId,
+              'productionType': productionType,
+              'implementationType':
+                  transformedData['implementationType'] ?? 'collective',
+              'data': transformedData,
+              'status': 'unsync',
+              'source': 'folder',
+            };
+          } else {
+            print('   ❌ No group data found in folders');
+          }
+        }
+      }
+
+      if (targetDraft == null) {
+        throw Exception(
+            'Local draft not found with localId: $localId (neither in SharedPreferences nor in folders)');
+      }
+
+      print('📊 Draft details:');
+      print('   productionType: ${targetDraft['productionType']}');
+      print('   implementationType: ${targetDraft['implementationType']}');
+      final dataMap = targetDraft['data'] is Map
+          ? Map<String, dynamic>.from(targetDraft['data'] as Map)
+          : <String, dynamic>{};
+      print('   fcaName: ${dataMap['fcaName'] ?? 'unknown'}');
+
+      print(' Calling savePendingRecord...');
+      await MonitoringRecordService.instance.savePendingRecord(
+        productionType: targetDraft['productionType'] as String,
+        implementationType: targetDraft['implementationType'] as String,
+        data: Map<String, dynamic>.from(targetDraft['data'] as Map),
+      );
+
+      print('✅ savePendingRecord succeeded');
+
+      // ✅ After successful sync, remove the local unsynced draft from SharedPreferences.
+      // The record now appears in Firebase pending data instead.
+      if (targetDraft['source'] != 'folder') {
+        await writeDrafts(remainingDrafts);
+        print('   Removed draft from local storage');
+      }
+
+      _notifyDraftsUpdated();
+      print('🎉 Sync completed successfully');
+    } catch (e) {
+      print('❌ syncDraftByLocalId ERROR: $e');
+      print('   Error type: ${e.runtimeType}');
+      rethrow;
     }
-
-    if (targetDraft == null) {
-      throw Exception('Local draft not found.');
-    }
-
-    await MonitoringRecordService.instance.savePendingRecord(
-      productionType: targetDraft['productionType'] as String,
-      implementationType: targetDraft['implementationType'] as String,
-      data: Map<String, dynamic>.from(targetDraft['data'] as Map),
-    );
-
-    // ✅ After successful sync, remove the local unsynced draft.
-    // The record now appears in Firebase pending data instead.
-    await writeDrafts(remainingDrafts);
-    _notifyDraftsUpdated();
   }
 
   void _notifyDraftsUpdated() {
     pendingDraftsUpdated.value = !pendingDraftsUpdated.value;
+  }
+
+  List<Map<String, dynamic>> _normalizeListOfMaps(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .map<Map<String, dynamic>>((item) {
+            if (item is Map<String, dynamic>) return item;
+            if (item is Map) return Map<String, dynamic>.from(item);
+            try {
+              final rawJson = item.toJson();
+              if (rawJson is Map<String, dynamic>) {
+                return Map<String, dynamic>.from(rawJson);
+              }
+            } catch (_) {
+              // ignore
+            }
+            return <String, dynamic>{};
+          })
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+    return <Map<String, dynamic>>[];
+  }
+
+  Map<String, dynamic>? _resolveMemberDataForFarmer({
+    required Map<String, dynamic> data,
+    required String farmerName,
+    required String saadId,
+  }) {
+    final membersByFarmerId = data['membersByFarmerId'] as Map? ?? {};
+    if (saadId.isNotEmpty && membersByFarmerId.containsKey(saadId)) {
+      final memberData = membersByFarmerId[saadId];
+      if (memberData is Map) {
+        return Map<String, dynamic>.from(memberData);
+      }
+    }
+
+    for (final entry in membersByFarmerId.entries) {
+      final memberData = entry.value;
+      if (memberData is! Map) continue;
+
+      final entrySaad = (memberData['saadIdNo'] as String? ??
+              memberData['saadId'] as String? ??
+              '')
+          .trim();
+      final entryName = (memberData['farmerName'] as String? ??
+              memberData['name'] as String? ??
+              '')
+          .trim();
+
+      if (entrySaad.isNotEmpty && saadId.isNotEmpty && entrySaad == saadId) {
+        return Map<String, dynamic>.from(memberData);
+      }
+      if (entryName.isNotEmpty &&
+          farmerName.isNotEmpty &&
+          entryName == farmerName) {
+        return Map<String, dynamic>.from(memberData);
+      }
+    }
+
+    return null;
   }
 
   Map<String, dynamic> _buildFarmerDataForSave({
@@ -575,38 +946,46 @@ class PendingDraftService {
   }) {
     print('   🔍 Filtering commodities for farmer: $farmerName ($saadId)');
 
-    // ✅ CRITICAL: First try to get pre-filtered commodities from membersByFarmerId
-    // This is more reliable than filtering ourselves
     var filteredCommodities = <Map<String, dynamic>>[];
     var filteredBatches = <Map<String, dynamic>>[];
 
     final membersByFarmerId = data['membersByFarmerId'] as Map? ?? {};
-    final memberId = saadId.isNotEmpty ? saadId : farmerName;
+    final memberData = _resolveMemberDataForFarmer(
+      data: data,
+      farmerName: farmerName,
+      saadId: saadId,
+    );
 
-    if (membersByFarmerId.containsKey(memberId)) {
-      final memberData = membersByFarmerId[memberId] as Map<String, dynamic>?;
-      if (memberData != null) {
-        filteredCommodities = List<Map<String, dynamic>>.from(
-            memberData['completedCommodities'] as List? ?? []);
-        filteredBatches = List<Map<String, dynamic>>.from(
-            memberData['completedBatches'] as List? ?? []);
-        print(
-            '      ✅ Found in membersByFarmerId: ${filteredCommodities.length} commodities, ${filteredBatches.length} batches');
-      }
-    } else {
-      // Fallback: filter from root-level if membersByFarmerId not available
+    if (memberData != null) {
+      filteredCommodities = List<Map<String, dynamic>>.from(
+          memberData['completedCommodities'] as List? ?? []);
+      filteredBatches = List<Map<String, dynamic>>.from(
+          memberData['completedBatches'] as List? ?? []);
       print(
-          '      ⚠️  membersByFarmerId not found for $memberId, filtering from root');
+          '      ✅ Found member-specific data in membersByFarmerId: ${filteredCommodities.length} commodities, ${filteredBatches.length} batches');
+    } else {
+      print(
+          '      ⚠️  No specific member entry found for $farmerName ($saadId), filtering root-level commodities');
 
-      final isCommodities = data['completedCommodities'] is List;
-      final isBatches = data['completedBatches'] is List;
-      final allCommodities = isCommodities
-          ? List<Map<String, dynamic>>.from(data['completedCommodities'])
-          : isBatches
-              ? List<Map<String, dynamic>>.from(data['completedBatches'])
-              : <Map<String, dynamic>>[];
+      final allCommodities = <Map<String, dynamic>>[];
+      if (data['completedCommodities'] is List) {
+        allCommodities
+            .addAll(_normalizeListOfMaps(data['completedCommodities']));
+      } else if (data['completedBatches'] is List) {
+        allCommodities.addAll(_normalizeListOfMaps(data['completedBatches']));
+      }
 
-      print('      Total commodities available: ${allCommodities.length}');
+      final distinctFarmerIds = <String>{};
+      final distinctFarmerNames = <String>{};
+      for (final commodity in allCommodities) {
+        final commoditySaadId = (commodity['saadIdNo'] as String? ?? '').trim();
+        final commodityFarmerName =
+            (commodity['farmerName'] as String? ?? '').trim();
+        if (commoditySaadId.isNotEmpty) distinctFarmerIds.add(commoditySaadId);
+        if (commodityFarmerName.isNotEmpty) {
+          distinctFarmerNames.add(commodityFarmerName);
+        }
+      }
 
       for (final commodity in allCommodities) {
         final commoditySaadId = (commodity['saadIdNo'] as String? ?? '').trim();
@@ -617,17 +996,41 @@ class PendingDraftService {
             : false;
         final matchesName =
             commodityFarmerName.isNotEmpty && commodityFarmerName == farmerName;
+        final isUnattributed = commodityFarmerName.isEmpty &&
+            commoditySaadId.isEmpty &&
+            farmerName.isNotEmpty &&
+            distinctFarmerIds.isEmpty &&
+            distinctFarmerNames.isEmpty;
 
-        if (matchesSaad || matchesName) {
-          print('         ✅ INCLUDED: $commoditySaadId / $commodityFarmerName');
+        if (matchesSaad || matchesName || isUnattributed) {
           filteredCommodities.add(commodity);
+          print(
+              '         ✅ INCLUDED root commodity: $commoditySaadId / $commodityFarmerName');
         }
+      }
+
+      if (filteredCommodities.isEmpty &&
+          allCommodities.isNotEmpty &&
+          distinctFarmerIds.length <= 1 &&
+          distinctFarmerNames.length <= 1) {
+        print(
+            '      ℹ️  Root commodities appear to belong to a single farmer, including all ${allCommodities.length} items');
+        filteredCommodities.addAll(allCommodities);
       }
     }
 
     print(
         '      Final commodities for this farmer: ${filteredCommodities.length}');
     print('      Final batches for this farmer: ${filteredBatches.length}');
+
+    String? perFarmerPhoto;
+    List<Map<String, dynamic>> perFarmerTrainings = [];
+    if (memberData != null) {
+      perFarmerPhoto = (memberData['farmPhoto'] as String?)?.trim();
+      perFarmerTrainings = _normalizeListOfMaps(memberData['trainings']);
+    } else if ((data['membersByFarmerId'] as Map?)?.isEmpty == true) {
+      perFarmerTrainings = _normalizeListOfMaps(data['trainings']);
+    }
 
     final farmerData = Map<String, dynamic>.from(data);
     farmerData['farmerName'] = farmerName;
@@ -638,8 +1041,13 @@ class PendingDraftService {
     ];
     farmerData['completedCommodities'] = filteredCommodities;
     farmerData['completedBatches'] = filteredBatches;
+    farmerData['farmPhoto'] = perFarmerPhoto?.isNotEmpty == true
+        ? perFarmerPhoto!
+        : (data['farmPhoto'] as String?)?.trim() ?? '';
+    farmerData['trainings'] = perFarmerTrainings.isNotEmpty
+        ? perFarmerTrainings
+        : <Map<String, dynamic>>[];
     farmerData['savedAt'] = DateTime.now().toIso8601String();
-    // ✅ Clear membersByFarmerId from individual farmer's saved data (they don't need it)
     farmerData.remove('membersByFarmerId');
 
     return farmerData;
@@ -670,6 +1078,7 @@ class PendingDraftService {
         saadId: saadId,
       );
 
+      // ✅ CRITICAL: Always save farmer data even if empty, to create the folder structure
       await storageService.saveFarmerData(
         productionType: productionType,
         groupName: groupName,
@@ -680,12 +1089,15 @@ class PendingDraftService {
       print(
           '📁 saveSingleFarmerData: saved farmer data for $farmerName ($saadId)');
 
-      final farmPhotoPath = data['farmPhoto'] as String? ?? '';
-      if (farmPhotoPath.isNotEmpty) {
+      // ✅ CRITICAL: Save picture if available in farmerData
+      //      Do not use root data farmPhoto for individuals if member-specific photo exists.
+      final photoFromFarmerData =
+          (farmerData['farmPhoto'] as String? ?? '').trim();
+      if (photoFromFarmerData.isNotEmpty) {
         try {
-          final sourceFile = File(farmPhotoPath);
+          final sourceFile = File(photoFromFarmerData);
           if (await sourceFile.exists()) {
-            final extension = farmPhotoPath.split('.').last;
+            final extension = photoFromFarmerData.split('.').last;
             await storageService.saveFarmerPicture(
               productionType: productionType,
               groupName: groupName,
@@ -694,13 +1106,21 @@ class PendingDraftService {
               pictureBytes: await sourceFile.readAsBytes(),
               imageExtension: extension,
             );
+            print(
+                '📷 saveSingleFarmerData: saved farmer picture for $farmerName');
+          } else {
+            print(
+                '⚠️ Warning: farmer photo file does not exist for $farmerName: $photoFromFarmerData');
           }
         } catch (e) {
-          print('Warning: Could not copy farm photo for $farmerName: $e');
+          print('⚠️ Warning: Could not copy farm photo for $farmerName: $e');
         }
+      } else {
+        print('   ℹ️ No farmer-specific photo found for $farmerName');
       }
     } catch (e) {
-      print('Warning: Could not save individual farmer data: $e');
+      print('❌ Warning: Could not save individual farmer data: $e');
+      rethrow; // Re-throw to see the error in logs
     }
   }
 
@@ -751,28 +1171,49 @@ class PendingDraftService {
       );
       print('✅ Group data saved to local folder');
 
-      var localMembers = members;
-      if (localMembers.isEmpty && data['membersByFarmerId'] is Map) {
-        final groupMap = Map<String, dynamic>.from(
-            data['membersByFarmerId'] as Map<String, dynamic>);
-        localMembers = groupMap.entries.map((entry) {
-          final farmerData =
-              Map<String, dynamic>.from(entry.value as Map<String, dynamic>);
-          final name = (farmerData['farmerName'] as String?)?.trim() ?? '';
-          final saadId = entry.key.toString().trim();
-          return {
-            'name': name,
-            'saadIdNo': saadId,
-          };
-        }).where((member) {
-          final name = (member['name'])?.trim() ?? '';
-          final saadId = (member['saadIdNo'])?.trim() ?? '';
-          return name.isNotEmpty || saadId.isNotEmpty;
-        }).toList();
-        print(
-            'ℹ️  Fallback members generated from membersByFarmerId: $localMembers');
+      final localMembersById = <String, Map<String, dynamic>>{};
+      for (final member in members) {
+        if (member is Map<String, dynamic>) {
+          final name = (member['name'] as String?)?.trim() ??
+              (member['farmerName'] as String?)?.trim() ??
+              '';
+          final saadId = (member['saadIdNo'] as String?)?.trim() ??
+              (member['saadId'] as String?)?.trim() ??
+              '';
+          final memberId = saadId.isNotEmpty ? saadId : name;
+          if (memberId.isNotEmpty) {
+            localMembersById[memberId] = {
+              'name': name,
+              'saadIdNo': saadId,
+            };
+          }
+        }
       }
 
+      if (data['membersByFarmerId'] is Map) {
+        final groupMap = Map<String, dynamic>.from(
+            data['membersByFarmerId'] as Map<String, dynamic>);
+        for (final entry in groupMap.entries) {
+          final memberId = entry.key.toString().trim();
+          if (memberId.isEmpty) {
+            continue;
+          }
+          final farmerData = entry.value is Map
+              ? Map<String, dynamic>.from(entry.value as Map)
+              : <String, dynamic>{};
+          final name = (farmerData['farmerName'] as String?)?.trim() ??
+              (farmerData['name'] as String?)?.trim() ??
+              '';
+          localMembersById.putIfAbsent(
+              memberId,
+              () => {
+                    'name': name,
+                    'saadIdNo': memberId,
+                  });
+        }
+      }
+
+      final localMembers = localMembersById.values.toList();
       if (localMembers.isEmpty) {
         print(
             '⚠️  WARNING: Members list is empty! No farmer folders will be created.');
@@ -788,51 +1229,49 @@ class PendingDraftService {
       print('   Final localMembers count: ${localMembers.length}');
       for (final member in localMembers) {
         print('   Processing member: $member');
-        if (member is Map<String, dynamic>) {
-          final farmerName = member['name'] as String? ??
-              member['farmerName'] as String? ??
-              'Unknown Farmer';
-          final saadId = member['saadIdNo'] as String? ??
-              member['saadId'] as String? ??
-              'NoSAAD';
+        final farmerName = member['name'] as String? ??
+            member['farmerName'] as String? ??
+            'Unknown Farmer';
+        final saadId = member['saadIdNo'] as String? ??
+            member['saadId'] as String? ??
+            'NoSAAD';
 
-          print('   -> Saving farmer: $farmerName ($saadId)');
-          print(
-              '      Calling _buildFarmerDataForSave with: farmerName="$farmerName", saadId="$saadId"');
+        print('   -> Saving farmer: $farmerName ($saadId)');
+        print(
+            '      Calling _buildFarmerDataForSave with: farmerName="$farmerName", saadId="$saadId"');
 
-          final farmerData = _buildFarmerDataForSave(
-            data: data,
-            farmerName: farmerName,
-            saadId: saadId,
-          );
+        final farmerData = _buildFarmerDataForSave(
+          data: data,
+          farmerName: farmerName,
+          saadId: saadId,
+        );
 
-          await storageService.saveFarmerData(
-            productionType: productionType,
-            groupName: groupName,
-            farmerName: farmerName,
-            saadId: saadId,
-            data: farmerData,
-          );
-          print('   ✅ Farmer data saved');
+        await storageService.saveFarmerData(
+          productionType: productionType,
+          groupName: groupName,
+          farmerName: farmerName,
+          saadId: saadId,
+          data: farmerData,
+        );
+        print('   ✅ Farmer data saved');
 
-          final farmPhotoPath = data['farmPhoto'] as String? ?? '';
-          if (farmPhotoPath.isNotEmpty) {
-            try {
-              final sourceFile = File(farmPhotoPath);
-              if (await sourceFile.exists()) {
-                final extension = farmPhotoPath.split('.').last;
-                await storageService.saveFarmerPicture(
-                  productionType: productionType,
-                  groupName: groupName,
-                  farmerName: farmerName,
-                  saadId: saadId,
-                  pictureBytes: await sourceFile.readAsBytes(),
-                  imageExtension: extension,
-                );
-              }
-            } catch (e) {
-              print('Warning: Could not copy farm photo for $farmerName: $e');
+        final farmPhotoPath = farmerData['farmPhoto'] as String? ?? '';
+        if (farmPhotoPath.isNotEmpty) {
+          try {
+            final sourceFile = File(farmPhotoPath);
+            if (await sourceFile.exists()) {
+              final extension = farmPhotoPath.split('.').last;
+              await storageService.saveFarmerPicture(
+                productionType: productionType,
+                groupName: groupName,
+                farmerName: farmerName,
+                saadId: saadId,
+                pictureBytes: await sourceFile.readAsBytes(),
+                imageExtension: extension,
+              );
             }
+          } catch (e) {
+            print('Warning: Could not copy farm photo for $farmerName: $e');
           }
         }
       }
@@ -844,10 +1283,21 @@ class PendingDraftService {
   Future<List<Map<String, dynamic>>> readDrafts() async {
     final prefs = await SharedPreferences.getInstance();
     final rawDrafts = prefs.getStringList(_storageKey) ?? <String>[];
+    print(
+        '📖 readDrafts: Retrieved ${rawDrafts.length} raw draft strings from SharedPreferences');
+    for (var i = 0; i < rawDrafts.length; i++) {
+      print(
+          '   [$i] ${rawDrafts[i].substring(0, (rawDrafts[i].length > 100 ? 100 : rawDrafts[i].length))}...');
+    }
 
     var drafts = rawDrafts
         .map((draft) => jsonDecode(draft) as Map<String, dynamic>)
         .toList();
+    print('📖 readDrafts: Decoded ${drafts.length} drafts');
+    for (final draft in drafts) {
+      print(
+          '   - localId: ${draft['localId']}, productionType: ${draft['productionType']}, status: ${draft['status']}');
+    }
 
     // ✅ Deduplication: Remove duplicate group records with identical key fields
     final deduplicated = _deduplicateDrafts(drafts);
@@ -892,9 +1342,8 @@ class PendingDraftService {
 
       // For group records: key is productionType + implementationType + fcaName
       // For individual records: key is productionType + implementationType + farmerName + saadId + reportingPeriod + projectTitle
-      final isGroupRecord = implementationType == 'collective' ||
-          implementationType == 'hybrid' ||
-          hasGroupMembers;
+      final isGroupRecord =
+          implementationType == 'collective' || implementationType == 'hybrid';
 
       final key = isGroupRecord
           ? '$productionType|$fcaName'
@@ -915,9 +1364,45 @@ class PendingDraftService {
   Future<void> writeDrafts(List<Map<String, dynamic>> drafts) async {
     // ✅ Deduplicate before writing to prevent duplicate entries
     final deduplicated = _deduplicateDrafts(drafts);
-    final prefs = await SharedPreferences.getInstance();
-    final rawDrafts = deduplicated.map(jsonEncode).toList();
-    await prefs.setStringList(_storageKey, rawDrafts);
+    print('💾 writeDrafts: Starting write process...');
+    print('   Deduplicated drafts count: ${deduplicated.length}');
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      print('   ✅ SharedPreferences instance obtained');
+
+      final rawDrafts = deduplicated.map(jsonEncode).toList();
+      print(
+          '💾 writeDrafts: About to write ${deduplicated.length} drafts to SharedPreferences');
+      for (final draft in deduplicated) {
+        print(
+            '   - localId: ${draft['localId']}, productionType: ${draft['productionType']}, status: ${draft['status']}');
+      }
+
+      print('   📝 Encoding JSON for ${rawDrafts.length} drafts...');
+      for (var i = 0; i < rawDrafts.length; i++) {
+        print('   [$i] ${rawDrafts[i].length} bytes');
+      }
+
+      print('   💾 Writing to SharedPreferences with key: $_storageKey');
+      await prefs.setStringList(_storageKey, rawDrafts);
+
+      // ✅ CRITICAL: Flush to ensure data is written to disk
+      await prefs.commit();
+      print('   ✓ Flushed to disk with commit()');
+
+      print(
+          '✅ writeDrafts: Successfully wrote ${deduplicated.length} drafts to SharedPreferences');
+
+      // Verify it was actually saved
+      final verification = prefs.getStringList(_storageKey) ?? [];
+      print('   ✓ Verification: ${verification.length} drafts now in storage');
+    } catch (e) {
+      print('❌ writeDrafts ERROR: $e');
+      print('   Error type: ${e.runtimeType}');
+      print('   Stacktrace: ${StackTrace.current}');
+      rethrow;
+    }
   }
 
   String buildDraftFileName({
@@ -967,11 +1452,63 @@ class PendingDraftService {
       uniqueKeys: const ['saadIdNo', 'name'],
     );
 
+    // ✅ FIX: Also merge incoming membersByFarmerId into existing
+    // Without this, a new farmer's commodities added via membersByFarmerId are lost
+    // because _buildFarmerDataForSave looks up membersByFarmerId by memberId
+    final existingMembersByFarmerId =
+        existingDraftData['membersByFarmerId'] is Map
+            ? Map<String, dynamic>.from(
+                existingDraftData['membersByFarmerId'] as Map)
+            : <String, dynamic>{};
+    if (incomingDraftData['membersByFarmerId'] is Map) {
+      final incomingMap = Map<String, dynamic>.from(
+          incomingDraftData['membersByFarmerId'] as Map);
+      final existingMap = existingMembersByFarmerId;
+      for (final entry in incomingMap.entries) {
+        final memberId = entry.key;
+        final incomingMemberData = entry.value is Map
+            ? Map<String, dynamic>.from(entry.value as Map)
+            : <String, dynamic>{};
+        if (!existingMap.containsKey(memberId)) {
+          // New farmer — add them directly, commodities intact
+          existingMap[memberId] = incomingMemberData;
+        } else {
+          // Existing farmer — merge their commodities append-only
+          final existingMember = Map<String, dynamic>.from(
+              existingMap[memberId] as Map<String, dynamic>);
+          final existingComms = List<Map<String, dynamic>>.from(
+              existingMember['completedCommodities'] as List? ?? []);
+          final incomingComms = List<Map<String, dynamic>>.from(
+              incomingMemberData['completedCommodities'] as List? ?? []);
+          for (final c in incomingComms) {
+            final fp =
+                '${c['typeOfCrop']}|${c['variety']}|${c['plantingDate']}';
+            final exists = existingComms.any((e) =>
+                '${e['typeOfCrop']}|${e['variety']}|${e['plantingDate']}' ==
+                fp);
+            if (!exists) existingComms.add(c);
+          }
+          existingMember['completedCommodities'] = existingComms;
+
+          // Trainings append-only
+          final existingTrainings = List<Map<String, dynamic>>.from(
+              existingMember['trainings'] as List? ?? []);
+          final incomingTrainings = List<Map<String, dynamic>>.from(
+              incomingMemberData['trainings'] as List? ?? []);
+          for (final t in incomingTrainings) {
+            final exists = existingTrainings
+                .any((old) => jsonEncode(old) == jsonEncode(t));
+            if (!exists) existingTrainings.add(t);
+          }
+          existingMember['trainings'] = existingTrainings;
+          existingMap[memberId] = existingMember;
+        }
+      }
+    }
+
     // Collect ALL commodities for filtering later
     final existingCommodities = <Map<String, dynamic>>[];
-    if (existingDraftData['membersByFarmerId'] is Map) {
-      final existingMembersByFarmerId = Map<String, dynamic>.from(
-          existingDraftData['membersByFarmerId'] as Map);
+    if (existingMembersByFarmerId.isNotEmpty) {
       for (final memberEntry in existingMembersByFarmerId.entries) {
         final memberData = memberEntry.value;
         if (memberData is Map<String, dynamic>) {
@@ -991,9 +1528,12 @@ class PendingDraftService {
     }
 
     final incomingCommodities = <Map<String, dynamic>>[];
-    if (incomingDraftData['membersByFarmerId'] is Map) {
-      final incomingMembersByFarmerId = Map<String, dynamic>.from(
-          incomingDraftData['membersByFarmerId'] as Map);
+    final incomingMembersByFarmerId =
+        incomingDraftData['membersByFarmerId'] is Map
+            ? Map<String, dynamic>.from(
+                incomingDraftData['membersByFarmerId'] as Map)
+            : <String, dynamic>{};
+    if (incomingMembersByFarmerId.isNotEmpty) {
       for (final memberEntry in incomingMembersByFarmerId.entries) {
         final memberData = memberEntry.value;
         if (memberData is Map<String, dynamic>) {
@@ -1011,13 +1551,24 @@ class PendingDraftService {
         ),
       );
     }
-    final allCommodities = [...existingCommodities, ...incomingCommodities];
+
+    // ✅ DEDUPLICATE commodities: same crop/variety/date = duplicate
+    final allCommodities = <Map<String, dynamic>>[];
+    final seenCommodities = <String>{};
+    for (final comm in [...existingCommodities, ...incomingCommodities]) {
+      final fp =
+          '${comm['typeOfCrop']}|${comm['variety']}|${comm['plantingDate']}';
+      if (!seenCommodities.contains(fp)) {
+        seenCommodities.add(fp);
+        allCommodities.add(comm);
+      } else {
+        print('   🔄 Skipping duplicate commodity: $fp');
+      }
+    }
 
     // Collect ALL batches for filtering later
     final existingBatches = <Map<String, dynamic>>[];
-    if (existingDraftData['membersByFarmerId'] is Map) {
-      final existingMembersByFarmerId = Map<String, dynamic>.from(
-          existingDraftData['membersByFarmerId'] as Map);
+    if (existingMembersByFarmerId.isNotEmpty) {
       for (final memberEntry in existingMembersByFarmerId.entries) {
         final memberData = memberEntry.value;
         if (memberData is Map<String, dynamic>) {
@@ -1060,6 +1611,8 @@ class PendingDraftService {
     final allBatches = [...existingBatches, ...incomingBatches];
 
     // ✅ Build membersByFarmerId: each farmer gets ONLY their filtered commodities/batches
+    // ✅ CRITICAL: Use the ALREADY-MERGED existingMembersByFarmerId for trainings/photos
+    // This preserves trainings from existing farmers when new farmers are added
     final allMembers = merged['members'] as List? ?? [];
     final membersByFarmerId = <String, dynamic>{};
 
@@ -1088,16 +1641,30 @@ class PendingDraftService {
             return batchName == memberName || batchSaadId == memberSaadId;
           }).toList();
 
+          // ✅ CRITICAL: Use ALREADY-MERGED existingMembersByFarmerId, not re-extracted incoming
+          // This preserves trainings/photos from existing farmers
+          final mergedMemberData =
+              existingMembersByFarmerId[memberId] as Map<String, dynamic>?;
+          final existingTrainings = mergedMemberData?['trainings'] as List?;
+          final existingPhoto =
+              (mergedMemberData?['farmPhoto'] as String?)?.trim();
+
           membersByFarmerId[memberId] = {
             'name': memberName,
             'farmerName': memberName,
             'saadIdNo': memberSaadId,
             'completedCommodities': farmerCommodities,
             'completedBatches': farmerBatches,
+            'trainings': (existingTrainings ?? <Map<String, dynamic>>[])
+                .map((item) => item is Map<String, dynamic>
+                    ? item
+                    : Map<String, dynamic>.from(item as Map))
+                .toList(),
+            'farmPhoto': existingPhoto ?? '',
           };
 
           print(
-              '      → $memberName: ${farmerCommodities.length} commodities, ${farmerBatches.length} batches');
+              '      → $memberName: ${farmerCommodities.length} commodities, ${farmerBatches.length} batches, ${(existingTrainings?.length ?? 0)} trainings');
         }
       }
     }
@@ -1278,6 +1845,9 @@ class PendingDraftService {
           'saadIdNo': saadId,
           'completedCommodities': mergedCommodities,
           'completedBatches': mergedBatches,
+          // ✅ CRITICAL: Include trainings and farmPhoto so _buildFarmerDataForSave can extract them
+          'trainings': _normalizeListOfMaps(merged['trainings']),
+          'farmPhoto': (merged['farmPhoto'] as String?)?.trim() ?? '',
         }
       };
     }

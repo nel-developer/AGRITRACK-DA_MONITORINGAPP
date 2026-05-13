@@ -8,6 +8,63 @@ import '../../widgets/crop_field.dart';
 import 'crop_step_wrapper.dart';
 import '../../routes/app_routes.dart';
 
+// Months list for month picker
+const List<String> monthsList = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December'
+];
+
+// Crop types and their varieties mapping
+const Map<String, List<String>> cropVarietiesMap = {
+  'Maize': ['Yellow Dent', 'White Dent', 'Flint', 'Sweet Corn', 'Pop Corn'],
+  'Rice': [
+    'Long Grain',
+    'Medium Grain',
+    'Short Grain',
+    'Aromatic',
+    'Glutinous'
+  ],
+  'Wheat': [
+    'Bread Wheat',
+    'Durum Wheat',
+    'Soft Wheat',
+    'Spring Wheat',
+    'Winter Wheat'
+  ],
+  'Beans': [
+    'Black Beans',
+    'Kidney Beans',
+    'Pinto Beans',
+    'Navy Beans',
+    'Garbanzo'
+  ],
+  'Vegetables': [
+    'Tomato',
+    'Onion',
+    'Cabbage',
+    'Carrot',
+    'Lettuce',
+    'Pepper',
+    'Cucumber',
+    'Eggplant'
+  ],
+  'Root Crops': ['Potato', 'Sweet Potato', 'Cassava', 'Taro', 'Yam'],
+  'Fruits': ['Banana', 'Mango', 'Coconut', 'Pineapple', 'Papaya', 'Avocado'],
+  'Pulses': ['Lentils', 'Peas', 'Chickpeas', 'Pigeon Peas'],
+  'Oilseeds': ['Sunflower', 'Canola', 'Soybean', 'Groundnut', 'Sesame'],
+  'Cash Crops': ['Sugar Cane', 'Coffee', 'Cocoa', 'Tea', 'Tobacco'],
+};
+
 class CropStep2CommodityInformation extends StatefulWidget {
   const CropStep2CommodityInformation({super.key, required this.wrapper});
   final CropStepWrapper wrapper;
@@ -480,18 +537,89 @@ class _CropStep2State extends State<CropStep2CommodityInformation> {
           const SizedBox(height: 20),
         ],
 
-        CropField(
-            label: 'Type of Crop',
-            hint: 'Enter Type of Crop',
-            initialValue: _typeOfCrop,
-            onChanged: (v) => _typeOfCrop = v),
+        // ── Type of Crop Dropdown ──────────────────────────────────
+        _label('Type of Crop'),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFDDDDDD), width: 1.5),
+          ),
+          child: DropdownButton<String>(
+            value: _typeOfCrop.isEmpty ? null : _typeOfCrop,
+            isExpanded: true,
+            underline: const SizedBox(),
+            hint: Text('Select Type of Crop',
+                style: GoogleFonts.poppins(
+                    fontSize: 14, color: DAColors.textMuted)),
+            onChanged: (String? newValue) {
+              if (newValue != null) {
+                setState(() {
+                  _typeOfCrop = newValue;
+                  // Reset variety when crop type changes
+                  _variety = '';
+                });
+              }
+            },
+            items: cropVarietiesMap.keys.map((String cropType) {
+              return DropdownMenuItem<String>(
+                value: cropType,
+                child: Text(cropType,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14, color: DAColors.textDark)),
+              );
+            }).toList(),
+          ),
+        ),
         const SizedBox(height: 20),
 
-        CropField(
-            label: 'Variety',
-            hint: 'Enter Variety',
-            initialValue: _variety,
-            onChanged: (v) => _variety = v),
+        // ── Variety Dropdown (dependent on crop type) ──────────────
+        _label('Variety'),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: _typeOfCrop.isEmpty
+                  ? const Color(0xFFCCCCCC)
+                  : const Color(0xFFDDDDDD),
+              width: 1.5,
+            ),
+          ),
+          child: DropdownButton<String>(
+            value: _variety.isEmpty ? null : _variety,
+            isExpanded: true,
+            underline: const SizedBox(),
+            hint: Text(
+              _typeOfCrop.isEmpty ? 'Select crop type first' : 'Select Variety',
+              style:
+                  GoogleFonts.poppins(fontSize: 14, color: DAColors.textMuted),
+            ),
+            onChanged: _typeOfCrop.isEmpty
+                ? null
+                : (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _variety = newValue;
+                      });
+                    }
+                  },
+            items: _typeOfCrop.isEmpty
+                ? []
+                : (cropVarietiesMap[_typeOfCrop] ?? []).map((String variety) {
+                    return DropdownMenuItem<String>(
+                      value: variety,
+                      child: Text(variety,
+                          style: GoogleFonts.poppins(
+                              fontSize: 14, color: DAColors.textDark)),
+                    );
+                  }).toList(),
+          ),
+        ),
         const SizedBox(height: 20),
 
         // ── Inputs received from program ──────────────────────────
@@ -663,10 +791,38 @@ class _CropStep2State extends State<CropStep2CommodityInformation> {
                   kb: TextInputType.number)),
           const SizedBox(width: 10),
           Expanded(
-              child: _inlineField(
-                  hint: 'Month Occurred',
-                  initial: _peakMonth,
-                  onChanged: (v) => setState(() => _peakMonth = v))),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFDDDDDD), width: 1.5),
+              ),
+              child: DropdownButton<String>(
+                value: _peakMonth.isEmpty ? null : _peakMonth,
+                isExpanded: true,
+                underline: const SizedBox(),
+                hint: Text('Select Month',
+                    style: GoogleFonts.poppins(
+                        fontSize: 14, color: DAColors.textMuted)),
+                onChanged: (String? newValue) {
+                  if (newValue != null) {
+                    setState(() {
+                      _peakMonth = newValue;
+                    });
+                  }
+                },
+                items: monthsList.map((String month) {
+                  return DropdownMenuItem<String>(
+                    value: month,
+                    child: Text(month,
+                        style: GoogleFonts.poppins(
+                            fontSize: 14, color: DAColors.textDark)),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
         ]),
         const SizedBox(height: 20),
 

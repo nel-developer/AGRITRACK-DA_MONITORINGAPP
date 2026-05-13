@@ -46,7 +46,7 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
     // Sheep
     'Dorper', 'Katahdin', 'Philippine Native Sheep',
     // Swine
-    'Landrace', 'Large White', 'Duroc', 'Hampshire', 'Philippine Native',
+    'Landrace', 'Large White', 'Duroc', 'Hampshire', 'Philippine Native Pig',
     // Horse
     'Arabian', 'Thoroughbred', 'Philippine Native Horse',
     // Other
@@ -66,11 +66,20 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
     }
 
     _farmerNameController = TextEditingController(text: _farmerName);
-    _breed = w.breed;
+
+    // ✅ CRITICAL: When adding a new batch for the same farmer, clear breed and inputs
+    if (w.isAddingNewCommodity) {
+      _breed = null; // Clear breed for new batch
+    } else {
+      _breed = w.breed; // Load breed only on fresh start
+    }
+
+    // ✅ CRITICAL: When adding a new batch for the same farmer, clear old inputs
+    // Only load inputs if they're empty (first time) - don't carry over from previous batch
     _inputsReceived
       ..clear()
       ..addAll(
-        (w.inputsReceived.isEmpty
+        (w.isAddingNewCommodity || w.inputsReceived.isEmpty
                 ? [LivestockInputReceived()]
                 : w.inputsReceived)
             .map((item) {
@@ -83,7 +92,7 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
     _inputsPurchased
       ..clear()
       ..addAll(
-        (w.inputsPurchased.isEmpty
+        (w.isAddingNewCommodity || w.inputsPurchased.isEmpty
                 ? [LivestockInputPurchased()]
                 : w.inputsPurchased)
             .map((item) {
@@ -96,7 +105,7 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
       );
     _farmgatePrices
       ..clear()
-      ..addAll(w.farmgatePrices.isEmpty
+      ..addAll(w.isAddingNewCommodity || w.farmgatePrices.isEmpty
           ? ['']
           : List<String>.from(w.farmgatePrices));
   }
@@ -390,72 +399,11 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
         w.implementationType?.toLowerCase() != 'collective' &&
             (w.isAddFarmer || w.farmerName.isEmpty || w.saadIdNo.isNotEmpty);
 
-    // For collectives, also show members list even when adding a new farmer
-    final bool showMembersList =
-        w.implementationType?.toLowerCase() == 'collective' &&
-            w.members.isNotEmpty;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _sectionTitle('Livestock Information'),
         const SizedBox(height: 24),
-
-        // Show existing members when adding new farmer to collective
-        if (showMembersList) ...[
-          _buildLabel('Existing Group Members'),
-          const SizedBox(height: 10),
-          _sectionBox(
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ...w.members.map((member) {
-                  final name = member['name'] as String? ?? '';
-                  final saadIdNo = member['saadIdNo'] as String? ?? '';
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF7FAF7),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: const Color(0xFFD9E8DB), width: 1),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  name,
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: DAColors.textDark,
-                                  ),
-                                ),
-                                Text(
-                                  'SAAD ID: $saadIdNo',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 12,
-                                    color: DAColors.textMuted,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
 
         // Name of Farmer / Group Members — only if individually managed and no name yet
         if (showApprovedFarmerPicker) ...[
@@ -487,79 +435,6 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
             style: GoogleFonts.poppins(fontSize: 14, color: DAColors.textDark),
             decoration: _rawDeco('Enter Name'),
           ),
-          const SizedBox(height: 20),
-        ] else if (w.implementationType?.toLowerCase() == 'collective' &&
-            !w.isAddFarmer) ...[
-          // For collectives (not adding new farmer), show group members section
-          _buildLabel('Group Members'),
-          const SizedBox(height: 10),
-          _sectionBox(
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (w.members.isEmpty) ...[
-              Text(
-                'No members added yet',
-                style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  color: DAColors.textMuted,
-                ),
-              ),
-              const SizedBox(height: 12),
-            ] else ...[
-              ...w.members.asMap().entries.map((e) {
-                final i = e.key;
-                final member = e.value;
-                final name = member['name'] as String? ?? '';
-                final saadIdNo = member['saadIdNo'] as String? ?? '';
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF7FAF7),
-                      borderRadius: BorderRadius.circular(8),
-                      border:
-                          Border.all(color: const Color(0xFFD9E8DB), width: 1),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                name,
-                                style: GoogleFonts.poppins(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: DAColors.textDark,
-                                ),
-                              ),
-                              if (saadIdNo.isNotEmpty)
-                                Text(
-                                  'SAAD ID: $saadIdNo',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 12,
-                                    color: DAColors.textMuted,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.remove_circle_outline,
-                              color: Colors.red),
-                          onPressed: () =>
-                              setState(() => w.members.removeAt(i)),
-                          tooltip: 'Remove member',
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-              const SizedBox(height: 12),
-            ],
-          ])),
           const SizedBox(height: 20),
         ],
 

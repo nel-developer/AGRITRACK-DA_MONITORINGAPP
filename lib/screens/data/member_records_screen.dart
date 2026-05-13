@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:convert';
+import 'dart:io';
 import '../../services/monitoring_record_service.dart';
 import '../../services/pending_draft_service.dart';
 import '../../services/user_session_service.dart';
@@ -18,10 +20,13 @@ class _DynamicMemberRecord {
   const _DynamicMemberRecord({
     required this.member,
     required this.record,
+    this.groupName = '',
   });
 
   final MemberModel member;
   final RecordModel record;
+  final String
+      groupName; // For grouping display (Collective, Project, or Group name)
 }
 
 class MemberRecordsScreen extends StatefulWidget {
@@ -52,7 +57,10 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
     super.initState();
     _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text));
     _sessionFuture = UserSessionService.instance.getCurrentSession();
+    print('🔷 initState: Creating initial _membersFuture');
     _membersFuture = _loadMembers();
+    print(
+        '🔷 initState: _membersFuture created, future object hash: ${_membersFuture.hashCode}');
   }
 
   @override
@@ -76,463 +84,857 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
   }
 
   Future<List<_DynamicMemberRecord>> _loadMembers() async {
-    final session = await UserSessionService.instance.getCurrentSession();
-    // ✅ Read unsync records directly from local farmer folders
-    final unsyncRecordsFromFolders =
-        await LocalFarmerStorageService.instance.getAllUnsyncRecords();
-    _remoteStatusMessage = null;
-
-    final parentFcaName =
-        (widget.record.data?['fcaName'] as String? ?? '').trim();
-
-    String normalizeName(String value) => value.trim().toLowerCase();
-    String normalizeKey(String value) =>
-        normalizeName(value).replaceAll(RegExp(r'[\s_]+'), '_');
-
-    final targetFcaNames = {
-      normalizeName(widget.record.name),
-      normalizeName(parentFcaName),
-      normalizeKey(widget.record.name),
-      normalizeKey(parentFcaName),
-    }..removeWhere((name) => name.isEmpty);
-
-    var remoteRecords = <Map<String, dynamic>>[];
-    if (session == null) {
-      _remoteStatusMessage = 'Sign in to load member records from Firebase.';
-    } else {
-      try {
-        // Fetch both pending and approved records
-        final pendingRecords =
-            await MonitoringRecordService.instance.fetchPendingRecords(
-          createdBy: session.isModerator ? null : session.uid,
-        );
-        final approvedRecords =
-            await MonitoringRecordService.instance.fetchApprovedRecords(
-          createdBy: session.isModerator ? null : session.uid,
-        );
-        remoteRecords = [...pendingRecords, ...approvedRecords];
-      } catch (error) {
-        _remoteStatusMessage = _isNetworkError(error)
-            ? 'No internet connection. Member records from Firebase are unavailable offline.'
-            : 'Unable to load member records from Firebase.';
-      }
-    }
-
-    final relatedRecords = <RecordModel>[];
-
-    List<dynamic> extractCommodities(
-      Map<String, dynamic>? source,
-      Map<String, dynamic>? fallback,
-    ) {
-      return (source?['commodities'] as List?) ??
-          (source?['completedCommodities'] as List?) ??
-          (source?['completedBatches'] as List?) ??
-          (fallback?['commodities'] as List?) ??
-          (fallback?['completedCommodities'] as List?) ??
-          (fallback?['completedBatches'] as List?) ??
-          const [];
-    }
-
-    RecordModel withMemberData(
-      RecordModel parent,
-      Map<String, dynamic> memberData,
-    ) {
-      // ✅ CRITICAL: Start with ONLY farmer-specific data from memberData
-      // Do NOT copy all parent data which contains all commodities/batches
-      final mergedData = <String, dynamic>{};
-
-      // Copy group-level fields from parent (NOT commodities or farmer-specific data)
-      final parentData = parent.data ?? {};
-      for (final key in [
-        'fcaName',
-        'reportingPeriod',
-        'projectTitle',
-        'implementationType',
-        'productionType',
-        'enumerator',
-        'location',
-        'region',
-        'district',
-        'ward'
-      ]) {
-        if (parentData.containsKey(key)) {
-          mergedData[key] = parentData[key];
-        }
-      }
-
-      // For a member-specific view, show this as an individual record.
-      mergedData['implementationType'] = 'individual';
-
-      // ✅ Set farmer-specific identity
-      final memberName = ((memberData['name'] as String?) ??
-              (memberData['farmerName'] as String?) ??
-              '')
-          .trim();
-      if (memberName.isNotEmpty) {
-        mergedData['farmerName'] = memberName;
-      }
-      final memberSaadId = (memberData['saadIdNo'] as String? ?? '').trim();
-      if (memberSaadId.isNotEmpty) {
-        mergedData['saadIdNo'] = memberSaadId;
-      }
-
-      // ✅ Use ONLY this farmer's commodities/batches (not shared)
-      // SAFETY: These must come from memberData, NOT from parent.data
-      // For Firestore synced records, commodities are stored directly
-      // For local drafts, they may be completedCommodities or completedBatches
-      final farmerCommodities = (memberData['commodities'] as List?) ??
-          (memberData['completedCommodities'] as List?) ??
-          [];
-      final farmerBatches = (memberData['completedBatches'] as List?) ?? [];
-
+    try {
+      print('🔍🔍🔍 _loadMembers START');
+      final session = await UserSessionService.instance.getCurrentSession();
+      // ✅ Read unsync records directly from local farmer folders
+      final unsyncRecordsFromFolders =
+          await LocalFarmerStorageService.instance.getAllUnsyncRecords();
       print(
-          '🔍 withMemberData for $memberName: ${farmerCommodities.length} commodities, ${farmerBatches.length} batches');
+          '🔍 Got ${unsyncRecordsFromFolders.length} unsync records from folders');
+      _remoteStatusMessage = null;
 
-      if (farmerCommodities.isNotEmpty) {
-        mergedData['completedCommodities'] = farmerCommodities;
-        mergedData['commodities'] = farmerCommodities;
-        // Also merge the first commodity's data for display
-        final commodityData = farmerCommodities.first;
-        if (commodityData is Map<String, dynamic>) {
-          // Merge commodity fields but preserve farmerName/saadIdNo
-          final farmerIdentity = {
-            'farmerName': memberName,
-            'saadIdNo': memberSaadId,
-          };
-          mergedData.addAll({...commodityData, ...farmerIdentity});
+      // ✅ For COLLECTIVE widget.record, load group.json if commodities missing
+      if (widget.record.implType.toLowerCase() == 'collective' &&
+          ((widget.record.data?['completedCommodities'] as List?)?.isEmpty ??
+              true)) {
+        try {
+          const baseDir =
+              '/storage/emulated/0/Android/data/com.example.da_monitoring_app/files/monitoring_records';
+          final groupJsonPath =
+              '$baseDir/${widget.record.productionType.toLowerCase()}/${widget.record.name.replaceAll(' ', '_')}/group.json';
+          final groupFile = File(groupJsonPath);
+
+          print(
+              '🔍 [LOAD COLLECTIVE] Loading widget.record group.json from: $groupJsonPath');
+
+          if (groupFile.existsSync()) {
+            final content = groupFile.readAsStringSync();
+            final groupJson = jsonDecode(content) as Map<String, dynamic>;
+
+            // Update widget.record.data with loaded commodities
+            if (widget.record.data != null) {
+              if (groupJson.containsKey('completedCommodities')) {
+                widget.record.data!['completedCommodities'] =
+                    groupJson['completedCommodities'];
+              }
+              if (groupJson.containsKey('trainings')) {
+                widget.record.data!['trainings'] = groupJson['trainings'];
+              }
+            }
+            print(
+                '✅ [LOAD COLLECTIVE] Loaded ${(groupJson['completedCommodities'] as List?)?.length ?? 0} commodities into widget.record');
+          }
+        } catch (e) {
+          print('⚠️ [LOAD COLLECTIVE] Error: $e');
         }
       }
 
-      if (farmerBatches.isNotEmpty) {
-        mergedData['completedBatches'] = farmerBatches;
-        mergedData['commodities'] = farmerBatches;
-        // Also merge the first batch's data for display
-        final batchData = farmerBatches.first;
-        if (batchData is Map<String, dynamic>) {
-          // Merge batch fields but preserve farmerName/saadIdNo
-          final farmerIdentity = {
-            'farmerName': memberName,
-            'saadIdNo': memberSaadId,
-          };
-          mergedData.addAll({...batchData, ...farmerIdentity});
-        }
-      }
+      final parentFcaName =
+          (widget.record.data?['fcaName'] as String? ?? '').trim();
 
-      final trainings = (memberData['trainings'] as List?) ?? [];
-      if (trainings.isNotEmpty) {
-        mergedData['trainings'] = trainings;
-      }
+      String normalizeName(String value) => value.trim().toLowerCase();
+      String normalizeKey(String value) =>
+          normalizeName(value).replaceAll(RegExp(r'[\s_]+'), '_');
 
-      return RecordModel(
-        id: parent.id,
-        name: memberName.isNotEmpty ? memberName : parent.name,
-        productionType: parent.productionType,
-        implType: 'Individual',
-        enumerator: parent.enumerator,
-        date: parent.date,
-        status: parent.status,
-        documentPath: parent.documentPath,
-        data: mergedData,
-        isLocal: parent.isLocal,
-      );
-    }
-
-    // ✅ Process unsync records directly from local folders
-    for (final record in unsyncRecordsFromFolders) {
-      final rawData = (record['data'] as Map<String, dynamic>?) ?? {};
-      final data = Map<String, dynamic>.from(rawData);
-      final productionType =
-          (record['productionType'] as String? ?? '').toLowerCase();
-      final groupName = (record['groupName'] as String? ?? '').trim();
-      final folderFarmerName = (record['farmerName'] as String? ?? '').trim();
-      final folderSaadId = (record['saadId'] as String? ?? '').trim();
-      final fcaName = (data['fcaName'] as String? ?? groupName).trim();
-
-      if ((data['farmerName'] as String?)?.trim().isEmpty == true) {
-        data['farmerName'] = folderFarmerName;
-      }
-      if ((data['saadIdNo'] as String?)?.trim().isEmpty == true) {
-        data['saadIdNo'] = folderSaadId;
-      }
-
-      final localGroupNames = {
-        normalizeName(fcaName),
-        normalizeName(groupName),
-        normalizeKey(fcaName),
-        normalizeKey(groupName),
+      final targetFcaNames = {
+        normalizeName(widget.record.name),
+        normalizeName(parentFcaName),
+        normalizeKey(widget.record.name),
+        normalizeKey(parentFcaName),
       }..removeWhere((name) => name.isEmpty);
 
-      final isSameFca = targetFcaNames.isEmpty
-          ? localGroupNames.isEmpty
-          : targetFcaNames.any(localGroupNames.contains);
+      var remoteRecords = <Map<String, dynamic>>[];
+      if (session == null) {
+        _remoteStatusMessage = 'Sign in to load member records from Firebase.';
+      } else {
+        try {
+          // Fetch both pending and approved records
+          final pendingRecords =
+              await MonitoringRecordService.instance.fetchPendingRecords(
+            createdBy: session.isModerator ? null : session.uid,
+          );
+          final approvedRecords =
+              await MonitoringRecordService.instance.fetchApprovedRecords(
+            createdBy: session.isModerator ? null : session.uid,
+          );
+          remoteRecords = [...pendingRecords, ...approvedRecords];
+        } catch (error) {
+          _remoteStatusMessage = _isNetworkError(error)
+              ? 'No internet connection. Member records from Firebase are unavailable offline.'
+              : 'Unable to load member records from Firebase.';
+        }
+      }
 
-      if (isSameFca &&
-          productionType == widget.record.productionType.toLowerCase()) {
-        print('✅ Loading unsync record: $groupName / $productionType');
-        relatedRecords.add(
-          RecordModel(
-            id: '${groupName}_${record['saadId']}',
-            name: folderFarmerName.isNotEmpty
-                ? folderFarmerName
-                : (fcaName.isEmpty ? groupName : fcaName),
+      final relatedRecords = <RecordModel>[];
+
+      List<dynamic> extractCommodities(
+        Map<String, dynamic>? source,
+        Map<String, dynamic>? fallback,
+      ) {
+        return (source?['commodities'] as List?) ??
+            (source?['completedCommodities'] as List?) ??
+            (source?['completedBatches'] as List?) ??
+            (fallback?['commodities'] as List?) ??
+            (fallback?['completedCommodities'] as List?) ??
+            (fallback?['completedBatches'] as List?) ??
+            const [];
+      }
+
+      RecordModel withMemberData(
+        RecordModel parent,
+        Map<String, dynamic> memberData,
+      ) {
+        // ✅ CRITICAL: Start with ONLY farmer-specific data from memberData
+        // Do NOT copy all parent data which contains all commodities/batches
+        final mergedData = <String, dynamic>{};
+
+        // Copy ALL group-level fields from parent (NOT commodities or farmer-specific data)
+        // This includes the FULL Project Background (Step 01) fields
+        final parentData = parent.data ?? {};
+        final projectBackgroundFields = [
+          'fcaName',
+          'reportingPeriod',
+          'projectTitle',
+          'implementationType',
+          'productionType',
+          'enumerator',
+          'location',
+          'region',
+          'province',          // ✅ NOW INCLUDED - was missing!
+          'municipality',       // ✅ NOW INCLUDED - was missing!
+          'barangay',           // ✅ NOW INCLUDED - was missing!
+          'primaryIntervention',     // ✅ NOW INCLUDED - was missing!
+          'primaryInterventionOther', // ✅ NOW INCLUDED - was missing!
+          'supportInterventions',    // ✅ NOW INCLUDED - was missing!
+          'district',
+          'ward'
+        ];
+        for (final key in projectBackgroundFields) {
+          if (parentData.containsKey(key)) {
+            mergedData[key] = parentData[key];
+          }
+        }
+
+        // For a member-specific view, show this as an individual record.
+        mergedData['implementationType'] = 'individual';
+
+        // ✅ Set farmer-specific identity
+        final memberName = ((memberData['name'] as String?) ??
+                (memberData['farmerName'] as String?) ??
+                '')
+            .trim();
+        if (memberName.isNotEmpty) {
+          mergedData['farmerName'] = memberName;
+        }
+        final memberSaadId = (memberData['saadIdNo'] as String? ?? '').trim();
+        if (memberSaadId.isNotEmpty) {
+          mergedData['saadIdNo'] = memberSaadId;
+        }
+
+        // ✅ Use ONLY this farmer's commodities/batches (not shared)
+        // SAFETY: These must come from memberData, NOT from parent.data
+        // For Firestore synced records, commodities are stored directly
+        // For local drafts, they may be completedCommodities or completedBatches
+        final farmerCommodities = (memberData['commodities'] as List?) ??
+            (memberData['completedCommodities'] as List?) ??
+            [];
+        final farmerBatches = (memberData['completedBatches'] as List?) ?? [];
+
+        print(
+            '🔍 withMemberData for $memberName: ${farmerCommodities.length} commodities, ${farmerBatches.length} batches');
+
+        if (farmerCommodities.isNotEmpty) {
+          mergedData['completedCommodities'] = farmerCommodities;
+          mergedData['commodities'] = farmerCommodities;
+          // Also merge the first commodity's data for display
+          final commodityData = farmerCommodities.first;
+          if (commodityData is Map<String, dynamic>) {
+            // Merge commodity fields but preserve farmerName/saadIdNo
+            final farmerIdentity = {
+              'farmerName': memberName,
+              'saadIdNo': memberSaadId,
+            };
+            mergedData.addAll({...commodityData, ...farmerIdentity});
+          }
+        }
+
+        if (farmerBatches.isNotEmpty) {
+          mergedData['completedBatches'] = farmerBatches;
+          mergedData['commodities'] = farmerBatches;
+          // Also merge the first batch's data for display
+          final batchData = farmerBatches.first;
+          if (batchData is Map<String, dynamic>) {
+            // Merge batch fields but preserve farmerName/saadIdNo
+            final farmerIdentity = {
+              'farmerName': memberName,
+              'saadIdNo': memberSaadId,
+            };
+            mergedData.addAll({...batchData, ...farmerIdentity});
+          }
+        }
+
+        final trainings = (memberData['trainings'] as List?) ?? [];
+        if (trainings.isNotEmpty) {
+          mergedData['trainings'] = trainings;
+        }
+
+        return RecordModel(
+          id: parent.id,
+          name: memberName.isNotEmpty ? memberName : parent.name,
+          productionType: parent.productionType,
+          implType: 'Individual',
+          enumerator: parent.enumerator,
+          date: parent.date,
+          status: parent.status,
+          documentPath: parent.documentPath,
+          data: mergedData,
+          isLocal: parent.isLocal,
+        );
+      }
+
+      // ✅ Process unsync records directly from local folders
+      // Group by productionType + groupName first
+      print(
+          '🔍 ====== Starting unsync records loop: unsyncRecordsFromFolders.length = ${unsyncRecordsFromFolders.length} ======');
+
+      final unsyncByGroup = <String, List<Map<String, dynamic>>>{};
+      final unsyncGroupInfo = <String, Map<String, dynamic>>{};
+
+      for (final record in unsyncRecordsFromFolders) {
+        final rawData = (record['data'] as Map<String, dynamic>?) ?? {};
+        final productionType =
+            (record['productionType'] as String? ?? '').toLowerCase();
+        final groupName = (record['groupName'] as String? ?? '').trim();
+        final detectedImplType =
+            (record['implType'] as String? ?? 'individual').toLowerCase();
+
+        print(
+            '   🔹 Raw record: groupName=$groupName, prodType=$productionType, implType=$detectedImplType');
+
+        // Only load unsync records matching production type
+        if (productionType == widget.record.productionType.toLowerCase()) {
+          final groupKey = '$productionType/$groupName';
+
+          // Add to grouped list
+          unsyncByGroup.putIfAbsent(groupKey, () => []).add(record);
+
+          // Store group info (fcaName, etc) from first record of this group
+          if (!unsyncGroupInfo.containsKey(groupKey)) {
+            unsyncGroupInfo[groupKey] = {
+              'groupName': groupName,
+              'productionType': productionType,
+              'implType': detectedImplType,
+              'fcaName': (rawData['fcaName'] as String? ?? groupName).trim(),
+            };
+          }
+
+          print('✅ GROUPED: $groupKey');
+        } else {
+          print('❌ SKIP: $groupName/$productionType');
+        }
+      }
+
+      // Now create ONE group record per group, with all farmers in membersByFarmerId
+      print('🔍 Processing ${unsyncByGroup.length} groups to create records');
+      for (final groupKey in unsyncByGroup.keys) {
+        final farmerRecords = unsyncByGroup[groupKey] ?? [];
+        final groupInfo = unsyncGroupInfo[groupKey] ?? {};
+        final groupName = groupInfo['groupName'] as String? ?? '';
+        final implType = (groupInfo['implType'] as String? ?? '').toLowerCase();
+
+        // ✅ CRITICAL: Filter - only include unsync groups matching current record's group name
+        final currentGroupName = widget.record.name.trim();
+
+        // Normalize both names: convert underscores to spaces for comparison
+        final normalizedGroupName = groupName.replaceAll('_', ' ').trim();
+        final normalizedCurrentName =
+            currentGroupName.replaceAll('_', ' ').trim();
+
+        print(
+            '   📍 Checking groupName="$groupName" (normalized: "$normalizedGroupName") vs currentGroupName="$currentGroupName" (normalized: "$normalizedCurrentName")');
+        if (normalizedGroupName != normalizedCurrentName) {
+          print(
+              '   ⏭️  SKIP GROUP: $groupName (not matching current view: $currentGroupName)');
+          continue;
+        }
+
+        print(
+            '   🔄 Creating group record for $groupKey with ${farmerRecords.length} farmers, implType=$implType');
+
+        // Build membersByFarmerId map with all farmers
+        final membersByFarmerId = <String, dynamic>{};
+        for (final record in farmerRecords) {
+          final farmerName = (record['farmerName'] as String? ?? '').trim();
+          final saadId = (record['saadId'] as String? ?? '').trim();
+          final farmerData = (record['data'] as Map<String, dynamic>?) ?? {};
+
+          if (farmerName.isNotEmpty && saadId.isNotEmpty) {
+            membersByFarmerId[saadId] = {
+              'name': farmerName,
+              'farmerName': farmerName,
+              'saadIdNo': saadId,
+              ...farmerData, // Include all farmer-specific data
+            };
+            print('      ✅ Added farmer: $farmerName ($saadId)');
+          }
+        }
+
+        // ✅ CRITICAL FIX: For COLLECTIVE, load group.json EVEN if no farmer records
+        // COLLECTIVE saves everything to group.json with no farmer subfolders
+        if (membersByFarmerId.isNotEmpty || implType == 'collective') {
+          // Create single group record with all farmers
+          final groupData = <String, dynamic>{
+            'groupName': groupName,
+            'membersByFarmerId': membersByFarmerId,
+            'fcaName': groupInfo['fcaName'] ?? groupName,
+            'implType': groupInfo['implType'],
+          };
+
+          // ✅ Load group.json for BOTH COLLECTIVE AND INDIVIDUAL to get project background
+          final implTypeStr =
+              (groupInfo['implType'] as String? ?? '').toLowerCase();
+          try {
+            // Use Android external files directory path
+            const baseDir =
+                '/storage/emulated/0/Android/data/com.example.da_monitoring_app/files/monitoring_records';
+            final groupJsonPath =
+                '$baseDir/${(groupInfo['productionType'] as String? ?? '').toLowerCase()}/${groupName.replaceAll(' ', '_')}/group.json';
+            final groupFile = File(groupJsonPath);
+
+            print(
+                '📂 [LOAD GROUP JSON] Trying to load group.json for $implTypeStr from: $groupJsonPath');
+
+            if (groupFile.existsSync()) {
+              final content = groupFile.readAsStringSync();
+              final groupJson = jsonDecode(content) as Map<String, dynamic>;
+
+              print(
+                  '✅ [LOAD GROUP JSON] group.json found for $implTypeStr! Keys: ${groupJson.keys.toList()}');
+
+              // ✅ For ALL types: First merge ALL fields from group.json, then selectively override with group-specific ones
+              groupData.addAll(groupJson);
+
+              // ✅ Explicitly ensure project background fields are set (even if empty)
+              final projectBackgroundKeys = [
+                'fcaName',
+                'reportingPeriod',
+                'projectTitle',
+                'implementationType',
+                'region',
+                'province',
+                'municipality',
+                'barangay',
+                'primaryIntervention',
+                'primaryInterventionOther',
+                'supportInterventions',
+              ];
+
+              for (final key in projectBackgroundKeys) {
+                if (groupJson.containsKey(key) && groupData[key] == null) {
+                  groupData[key] = groupJson[key];
+                }
+              }
+
+              print(
+                  '✅ Loaded group.json for $implTypeStr $groupName. Project Background Fields:');
+              for (final key in projectBackgroundKeys) {
+                final value = groupData[key];
+                print('   - $key: "$value"');
+              }
+            } else {
+              print(
+                  '⚠️ group.json not found for $implTypeStr $groupName at $groupJsonPath');
+            }
+          } catch (e) {
+            print(
+                '⚠️ Error loading group.json for $implTypeStr $groupName: $e');
+          }
+
+          final groupRecord = RecordModel(
+            id: groupKey,
+            name: groupName,
             productionType: widget.record.productionType,
-            implType: 'Individual',
+            implType:
+                _titleCase(groupInfo['implType'] as String? ?? 'individual'),
             enumerator: 'Offline Profiler',
             date: _formatDate(DateTime.now().toIso8601String()),
             status: 'unsync',
-            data: data,
+            data: groupData,
             isLocal: true,
-          ),
-        );
+          );
+          relatedRecords.add(groupRecord);
+          print(
+              '   ✅ Added GROUP record: $groupName with ${membersByFarmerId.length} members to relatedRecords. relatedRecords now has ${relatedRecords.length} records');
+        } else {
+          print('   ⚠️ No farmers in membersByFarmerId for $groupKey');
+        }
       }
-    }
-
-    for (final record in remoteRecords) {
-      final fcaName = (record['fcaName'] as String? ?? '').trim();
-      final productionType =
-          (record['productionType'] as String? ?? '').toLowerCase();
-      final remoteGroupNames = {
-        normalizeName(fcaName),
-        normalizeKey(fcaName),
-      }..removeWhere((name) => name.isEmpty);
-      final isSameFca = targetFcaNames.isEmpty
-          ? remoteGroupNames.isEmpty
-          : targetFcaNames.any(remoteGroupNames.contains);
-
-      if (isSameFca &&
-          (productionType == widget.record.productionType.toLowerCase() ||
-              productionType ==
-                  '${widget.record.productionType.toLowerCase()}_production')) {
-        relatedRecords.add(
-          RecordModel(
-            id: record['id'] as String?,
-            name: fcaName,
-            productionType: widget.record.productionType,
-            implType: _titleCase(record['implementationType'] as String? ?? ''),
-            enumerator: (record['enumerator'] as String?) ?? 'Profiler',
-            date: _formatDate(record['createdAt']?.toString()),
-            status: ((record['reviewStatus'] as String?)?.toLowerCase() ==
-                    'approved')
-                ? 'approved'
-                : 'pending',
-            data: record,
-            documentPath: record['documentPath'] as String?,
-          ),
-        );
-      }
-    }
-
-    final members = <String, _DynamicMemberRecord>{};
-    print(
-        '🔍 _loadMembers: Processing ${relatedRecords.length} related records');
-
-    for (final record in relatedRecords) {
-      final farmerName = (record.data?['farmerName'] as String? ?? '').trim();
-      final membersList = (record.data?['members'] as List?) ?? [];
-      final rawMembersByFarmerId = record.data?['membersByFarmerId'];
-      final membersByFarmerId = rawMembersByFarmerId is Map
-          ? Map<String, dynamic>.from(rawMembersByFarmerId)
-          : <String, dynamic>{};
 
       print(
-          '🔍 Processing record: ${record.name}, implType: ${record.implType}, farmerName: "$farmerName", membersByFarmerId: ${membersByFarmerId.length} entries, membersList: ${membersList.length} entries');
+          '🔍 ====== End unsync records loop: relatedRecords.length = ${relatedRecords.length} ======');
 
-      // ── Case 1: Individual/Hybrid record with a specific farmer's name ──
-      // Only process if this is NOT a group record with membersByFarmerId
-      if (farmerName.isNotEmpty && membersByFarmerId.isEmpty) {
-        final status = record.status == 'unsync' ? 'in_progress' : 'completed';
-        final candidate = _DynamicMemberRecord(
-          member: MemberModel(name: farmerName, status: status),
-          record: record,
-        );
-        final existing = members[farmerName];
-        if (existing == null ||
-            _recordPriority(candidate.record) >
-                _recordPriority(existing.record)) {
-          members[farmerName] = candidate;
+      for (final record in remoteRecords) {
+        final fcaName = (record['fcaName'] as String? ?? '').trim();
+        final productionType =
+            (record['productionType'] as String? ?? '').toLowerCase();
+        final remoteGroupNames = {
+          normalizeName(fcaName),
+          normalizeKey(fcaName),
+        }..removeWhere((name) => name.isEmpty);
+        final isSameFca = targetFcaNames.isEmpty
+            ? remoteGroupNames.isEmpty
+            : targetFcaNames.any(remoteGroupNames.contains);
+
+        if (isSameFca &&
+            (productionType == widget.record.productionType.toLowerCase() ||
+                productionType ==
+                    '${widget.record.productionType.toLowerCase()}_production')) {
+          relatedRecords.add(
+            RecordModel(
+              id: record['id'] as String?,
+              name: fcaName,
+              productionType: widget.record.productionType,
+              implType:
+                  _titleCase(record['implementationType'] as String? ?? ''),
+              enumerator: (record['enumerator'] as String?) ?? 'Profiler',
+              date: _formatDate(record['createdAt']?.toString()),
+              status: ((record['reviewStatus'] as String?)?.toLowerCase() ==
+                      'approved')
+                  ? 'approved'
+                  : 'pending',
+              data: record,
+              documentPath: record['documentPath'] as String?,
+            ),
+          );
         }
       }
 
-      // ── Case 2: Group/Collective record with membersByFarmerId map ──
-      // CRITICAL: Read from membersByFarmerId (safe map) instead of members array (old array)
-      // Process this for ALL records that have membersByFarmerId, regardless of root farmerName
-      if (membersByFarmerId.isNotEmpty) {
-        for (final entry in membersByFarmerId.entries) {
-          final saadId = entry.key;
-          final farmerDataRaw = entry.value;
-          if (farmerDataRaw is Map) {
-            final farmerData = Map<String, dynamic>.from(farmerDataRaw);
-            var name = ((farmerData['name'] as String?) ??
-                    (farmerData['farmerName'] as String?) ??
-                    '')
-                .trim();
-            if (name.isEmpty) {
-              name = saadId.trim();
-            }
-            if (name.isNotEmpty) {
-              final status =
-                  record.status == 'unsync' ? 'in_progress' : 'completed';
-              final memberRecord = withMemberData(record, farmerData);
-              final candidate = _DynamicMemberRecord(
-                member: MemberModel(name: name, status: status),
-                record: memberRecord,
-              );
-              final existing = members[name];
-              if (existing == null ||
-                  _recordPriority(candidate.record) >
-                      _recordPriority(existing.record)) {
-                members[name] = candidate;
-              }
-              print('✅ Extracted member from Case 2: $name (saadId: $saadId)');
-            }
+      final members = <String, _DynamicMemberRecord>{};
+      print(
+          '🔍 _loadMembers: Processing ${relatedRecords.length} related records');
+
+      for (final record in relatedRecords) {
+        final farmerName = (record.data?['farmerName'] as String? ?? '').trim();
+
+        // For unsync records, use record.name if farmerName is not in data
+        final effectiveFarmerName = farmerName.isNotEmpty
+            ? farmerName
+            : (record.status == 'unsync' ? record.name : '').trim();
+
+        final membersList = (record.data?['members'] as List?) ?? [];
+        final rawMembersByFarmerId = record.data?['membersByFarmerId'];
+        final membersByFarmerId = rawMembersByFarmerId is Map
+            ? Map<String, dynamic>.from(rawMembersByFarmerId)
+            : <String, dynamic>{};
+
+        print(
+            '🔍 Processing record: name=${record.name}, status=${record.status}, farmerName="$farmerName", effectiveFarmerName="$effectiveFarmerName", membersByFarmerId=${membersByFarmerId.length}, membersList=${membersList.length}');
+        print(
+            '   🔑 membersByFarmerId keys: ${membersByFarmerId.keys.toList()}');
+
+        // ── Case 1: Individual/Hybrid record with a specific farmer's name ──
+        // Only process if this is NOT a group record with membersByFarmerId
+        if (effectiveFarmerName.isNotEmpty && membersByFarmerId.isEmpty) {
+          final status =
+              record.status == 'unsync' ? 'in_progress' : 'completed';
+          final groupName = (record.data?['groupName'] as String? ?? '').trim();
+          final candidate = _DynamicMemberRecord(
+            member: MemberModel(name: effectiveFarmerName, status: status),
+            record: record,
+            groupName: groupName,
+          );
+          final existing = members[effectiveFarmerName];
+          if (existing == null ||
+              _recordPriority(candidate.record) >
+                  _recordPriority(existing.record)) {
+            members[effectiveFarmerName] = candidate;
+            print(
+                '✅ Case 1 ADDED: $effectiveFarmerName (status: $status, group: $groupName)');
+          } else {
+            print(
+                'ℹ️ Case 1 SKIP (existing with higher priority): $effectiveFarmerName');
           }
-        }
-      }
-
-      // ── Case 3: Fallback to old members array for backward compatibility ──
-      // Only if no membersByFarmerId and no farmerName
-      else if (membersList.isNotEmpty && farmerName.isEmpty) {
-        for (final memberRaw in membersList) {
-          if (memberRaw is Map) {
-            final member = Map<String, dynamic>.from(memberRaw);
-            var name = ((member['name'] as String?) ??
-                    (member['farmerName'] as String?) ??
-                    '')
-                .trim();
-            if (name.isEmpty) {
-              name = (member['saadIdNo'] as String? ?? '').trim();
-            }
-            if (name.isNotEmpty) {
-              final status =
-                  record.status == 'unsync' ? 'in_progress' : 'completed';
-              final memberRecord = withMemberData(record, member);
-              final candidate = _DynamicMemberRecord(
-                member: MemberModel(name: name, status: status),
-                record: memberRecord,
-              );
-              final existing = members[name];
-              if (existing == null ||
-                  _recordPriority(candidate.record) >
-                      _recordPriority(existing.record)) {
-                members[name] = candidate;
-              }
-              print('✅ Extracted member from Case 3: $name');
-            }
-          }
-        }
-      }
-    }
-
-    final currentFarmerName =
-        (widget.record.data?['farmerName'] as String? ?? '').trim();
-
-    // For synced individual records, farmerName might not be at top level
-    // Check if this is an individual record and look in membersByFarmerId
-    String actualFarmerName = currentFarmerName;
-    String actualSaadId =
-        (widget.record.data?['saadIdNo'] as String? ?? '').trim();
-
-    if (actualFarmerName.isEmpty &&
-        widget.record.implType.toLowerCase() == 'individual') {
-      final membersByFarmerId =
-          widget.record.data?['membersByFarmerId'] as Map<String, dynamic>? ??
-              {};
-      if (membersByFarmerId.isNotEmpty) {
-        // For individual records, there should be only one member
-        final firstMemberKey = membersByFarmerId.keys.first;
-        final firstMemberData =
-            membersByFarmerId[firstMemberKey] as Map<String, dynamic>? ?? {};
-        actualFarmerName = (firstMemberData['name'] as String? ??
-                firstMemberData['farmerName'] as String? ??
-                '')
-            .trim();
-        actualSaadId = (firstMemberData['saadIdNo'] as String? ?? '').trim();
-      }
-    }
-
-    if (actualFarmerName.isNotEmpty) {
-      // For individual records, merge commodity data from subcollection or root commodity collection
-      final membersByFarmerId =
-          widget.record.data?['membersByFarmerId'] as Map<String, dynamic>? ??
-              {};
-
-      Map<String, dynamic>? mergedData = widget.record.data;
-      Map<String, dynamic>? memberData;
-
-      if (membersByFarmerId.isNotEmpty) {
-        if (actualSaadId.isNotEmpty &&
-            membersByFarmerId.containsKey(actualSaadId)) {
-          memberData = membersByFarmerId[actualSaadId] as Map<String, dynamic>?;
         } else {
+          print(
+              'ℹ️ Case 1 SKIP: effectiveName empty=${effectiveFarmerName.isEmpty}, hasByFarmerId=${membersByFarmerId.isNotEmpty}');
+        }
+
+        // ── Case 2: Group/Collective record with membersByFarmerId map ──
+        // CRITICAL: For COLLECTIVE, DO NOT extract as member - skip entirely
+        // For HYBRID/INDIVIDUAL, extract members from membersByFarmerId (safe map)
+        final implType =
+            (record.data?['implementationType'] as String? ?? '').toLowerCase();
+
+        if (membersByFarmerId.isNotEmpty && implType != 'collective') {
+          // HYBRID/INDIVIDUAL: Extract individual farmers from group
+          final groupName =
+              (record.data?['groupName'] as String? ?? record.name).trim();
           for (final entry in membersByFarmerId.entries) {
-            final data = entry.value;
-            if (data is Map<String, dynamic>) {
-              final memberSaadId = (data['saadIdNo'] as String? ?? '').trim();
-              final memberName = ((data['name'] as String?) ??
-                      (data['farmerName'] as String?) ??
+            final saadId = entry.key;
+            final farmerDataRaw = entry.value;
+            if (farmerDataRaw is Map) {
+              final farmerData = Map<String, dynamic>.from(farmerDataRaw);
+              var name = ((farmerData['name'] as String?) ??
+                      (farmerData['farmerName'] as String?) ??
                       '')
                   .trim();
-              if (memberSaadId.isNotEmpty &&
-                  actualSaadId.isNotEmpty &&
-                  memberSaadId == actualSaadId) {
-                memberData = data;
-                break;
+              if (name.isEmpty) {
+                name = saadId.trim();
               }
-              if (memberData == null &&
-                  memberName.isNotEmpty &&
-                  memberName == actualFarmerName) {
-                memberData = data;
+              if (name.isNotEmpty) {
+                final status =
+                    record.status == 'unsync' ? 'in_progress' : 'completed';
+                final memberRecord = withMemberData(record, farmerData);
+                final candidate = _DynamicMemberRecord(
+                  member: MemberModel(name: name, status: status),
+                  record: memberRecord,
+                  groupName: groupName,
+                );
+                // ✅ Use SAAD ID as unique key to avoid overwrites
+                final uniqueKey = saadId.isNotEmpty ? saadId : name;
+                final existing = members[uniqueKey];
+                if (existing == null ||
+                    _recordPriority(candidate.record) >
+                        _recordPriority(existing.record)) {
+                  members[uniqueKey] = candidate;
+                }
+                print(
+                    '✅ Extracted member from Case 2: $name (saadId: $saadId)');
+              }
+            }
+          }
+        } else if (implType == 'collective') {
+          print(
+              '⏭️  SKIP Case 2: COLLECTIVE $record.name is group-level only, no member extraction');
+        }
+
+        // ── Case 3: Fallback to old members array for backward compatibility ──
+        // Only if no membersByFarmerId and no farmerName
+        else if (membersList.isNotEmpty && farmerName.isEmpty) {
+          final groupName =
+              (record.data?['groupName'] as String? ?? record.name).trim();
+          for (final memberRaw in membersList) {
+            if (memberRaw is Map) {
+              final member = Map<String, dynamic>.from(memberRaw);
+              var name = ((member['name'] as String?) ??
+                      (member['farmerName'] as String?) ??
+                      '')
+                  .trim();
+              if (name.isEmpty) {
+                name = (member['saadIdNo'] as String? ?? '').trim();
+              }
+              if (name.isNotEmpty) {
+                final status =
+                    record.status == 'unsync' ? 'in_progress' : 'completed';
+                final memberRecord = withMemberData(record, member);
+                final candidate = _DynamicMemberRecord(
+                  member: MemberModel(name: name, status: status),
+                  record: memberRecord,
+                  groupName: groupName,
+                );
+                // ✅ Use SAAD ID as unique key to avoid overwrites
+                final saadIdFromMember =
+                    (member['saadIdNo'] as String? ?? '').trim();
+                final uniqueKey =
+                    saadIdFromMember.isNotEmpty ? saadIdFromMember : name;
+                final existing = members[uniqueKey];
+                if (existing == null ||
+                    _recordPriority(candidate.record) >
+                        _recordPriority(existing.record)) {
+                  members[uniqueKey] = candidate;
+                }
+                print('✅ Extracted member from Case 3: $name');
               }
             }
           }
         }
       }
 
-      final commodities = extractCommodities(memberData, widget.record.data);
+      final currentFarmerName =
+          (widget.record.data?['farmerName'] as String? ?? '').trim();
 
-      mergedData = Map<String, dynamic>.from(widget.record.data ?? {});
-      if (commodities.isNotEmpty) {
-        final commodityData = commodities.first as Map<String, dynamic>;
-        mergedData.addAll(commodityData);
+      // For synced individual records, farmerName might not be at top level
+      // Check if this is an individual record and look in membersByFarmerId
+      String actualFarmerName = currentFarmerName;
+      String actualSaadId =
+          (widget.record.data?['saadIdNo'] as String? ?? '').trim();
+
+      if (actualFarmerName.isEmpty &&
+          widget.record.implType.toLowerCase() == 'individual') {
+        final membersByFarmerId =
+            widget.record.data?['membersByFarmerId'] as Map<String, dynamic>? ??
+                {};
+        if (membersByFarmerId.isNotEmpty) {
+          // For individual records, there should be only one member
+          final firstMemberKey = membersByFarmerId.keys.first;
+          final firstMemberData =
+              membersByFarmerId[firstMemberKey] as Map<String, dynamic>? ?? {};
+          actualFarmerName = (firstMemberData['name'] as String? ??
+                  firstMemberData['farmerName'] as String? ??
+                  '')
+              .trim();
+          actualSaadId = (firstMemberData['saadIdNo'] as String? ?? '').trim();
+        }
       }
 
-      final trainings = (memberData?['trainings'] as List?) ??
-          (widget.record.data?['trainings'] as List?) ??
-          [];
-      if (trainings.isNotEmpty) {
-        mergedData['trainings'] = trainings;
+      if (actualFarmerName.isNotEmpty) {
+        // For individual records, merge commodity data from subcollection or root commodity collection
+        final membersByFarmerId =
+            widget.record.data?['membersByFarmerId'] as Map<String, dynamic>? ??
+                {};
+
+        print('🔍 LOADING MEMBER DATA for $actualFarmerName:');
+        print('   - actualSaadId: "$actualSaadId"');
+        print(
+            '   - membersByFarmerId keys: ${membersByFarmerId.keys.toList()}');
+        print(
+            '   - widget.record.data has completedCommodities: ${widget.record.data?['completedCommodities'] != null}');
+
+        Map<String, dynamic>? mergedData = widget.record.data;
+        Map<String, dynamic>? memberData;
+
+        // ✅ CRITICAL FIX: Load fresh group.json to ensure we have latest project background
+        // This ensures all project background fields are present when viewing farmer records
+        Map<String, dynamic> freshGroupData = <String, dynamic>{};
+        if ((widget.record.status == 'unsync' ||
+                widget.record.status == 'pending') &&
+            widget.record.isLocal) {
+          try {
+            final groupName = widget.record.name.trim();
+            const baseDir =
+                '/storage/emulated/0/Android/data/com.example.da_monitoring_app/files/monitoring_records';
+            final groupJsonPath =
+                '$baseDir/${widget.record.productionType.toLowerCase()}/${groupName.replaceAll(' ', '_')}/group.json';
+            final groupFile = File(groupJsonPath);
+
+            print(
+                '📂 [FARMER VIEW] Loading fresh group.json from: $groupJsonPath');
+
+            if (groupFile.existsSync()) {
+              final content = groupFile.readAsStringSync();
+              freshGroupData =
+                  jsonDecode(content) as Map<String, dynamic>;
+
+              print(
+                  '✅ [FARMER VIEW] Loaded fresh group.json with keys: ${freshGroupData.keys.toList()}');
+            }
+          } catch (e) {
+            print('⚠️ [FARMER VIEW] Error loading group.json: $e');
+          }
+        }
+
+        // ✅ CRITICAL FIX: For local records (unsync/draft), load FRESH data from LocalFarmerStorageService
+        // This ensures we always get the latest version from disk, not cached draft data
+        // This fixes the issue where adding a second farmer would lose the first farmer's data
+        if ((widget.record.status == 'unsync' ||
+                widget.record.status == 'pending') &&
+            widget.record.isLocal &&
+            actualFarmerName.isNotEmpty) {
+          try {
+            final fcaName = (widget.record.data?['fcaName'] as String? ?? '')
+                .trim()
+                .replaceAll('_', ' ');
+            final farmerId =
+                actualSaadId.isNotEmpty ? actualSaadId : actualFarmerName;
+
+            print(
+                '   📂 LOADING FRESH DATA from LocalFarmerStorageService for farmer: $actualFarmerName (farmerId: $farmerId)');
+
+            final freshFarmerData =
+                await LocalFarmerStorageService.instance.getFarmerData(
+              productionType: widget.record.productionType.toLowerCase(),
+              groupName: fcaName,
+              farmerName: actualFarmerName,
+              saadId: farmerId,
+            );
+
+            if (freshFarmerData != null && freshFarmerData.isNotEmpty) {
+              print(
+                  '   ✅ LOADED FRESH DATA: ${freshFarmerData.keys.length} fields');
+              memberData = freshFarmerData;
+            } else {
+              print(
+                  '   ⚠️ No fresh data found in LocalFarmerStorageService, using cached data');
+            }
+          } catch (e) {
+            print(
+                '   ⚠️ Error loading fresh farmer data from LocalFarmerStorageService: $e');
+          }
+        }
+
+        if (membersByFarmerId.isNotEmpty && memberData == null) {
+          print(
+              '   - membersByFarmerId is NOT EMPTY (${membersByFarmerId.length} entries) and memberData is null, attempting fallback');
+          if (actualSaadId.isNotEmpty &&
+              membersByFarmerId.containsKey(actualSaadId)) {
+            memberData =
+                membersByFarmerId[actualSaadId] as Map<String, dynamic>?;
+            print(
+                '   - ✅ Found memberData by exact SAAD ID match: $actualSaadId');
+          } else {
+            print('   - Searching membersByFarmerId by name match...');
+            for (final entry in membersByFarmerId.entries) {
+              final data = entry.value;
+              if (data is Map<String, dynamic>) {
+                final memberSaadId = (data['saadIdNo'] as String? ?? '').trim();
+                final memberName = ((data['name'] as String?) ??
+                        (data['farmerName'] as String?) ??
+                        '')
+                    .trim();
+                if (memberSaadId.isNotEmpty &&
+                    actualSaadId.isNotEmpty &&
+                    memberSaadId == actualSaadId) {
+                  memberData = data;
+                  print('   - ✅ Found memberData by SAAD ID: $memberSaadId');
+                  break;
+                }
+                if (memberData == null &&
+                    memberName.isNotEmpty &&
+                    memberName == actualFarmerName) {
+                  memberData = data;
+                  print(
+                      '   - ✅ Found memberData by name match: $memberName (saadId: $memberSaadId)');
+                }
+              }
+            }
+          }
+        } else if (membersByFarmerId.isEmpty && memberData == null) {
+          print(
+              '   - membersByFarmerId is EMPTY and memberData is null: using widget.record.data directly (local record)');
+        }
+
+        final commodities = extractCommodities(memberData, widget.record.data);
+
+        print('🔍 DEBUG Member Loading for $actualFarmerName:');
+        print('   - memberData provided: ${memberData != null}');
+        print(
+            '   - widget.record.data has completedCommodities: ${widget.record.data?['completedCommodities'] != null}');
+        print('   - extracted commodities count: ${commodities.length}');
+        if (commodities.isNotEmpty) {
+          for (int i = 0; i < commodities.length; i++) {
+            final c = commodities[i] as Map<String, dynamic>?;
+            print('   - commodity[$i]: ${c?['typeOfCrop']} ${c?['variety']}');
+          }
+        }
+
+        // ✅ CRITICAL: Start with group project background from widget.record.data
+        // This contains Step 01 fields: fcaName, reportingPeriod, projectTitle, region, etc.
+        mergedData = Map<String, dynamic>.from(widget.record.data ?? {});
+
+        // ✅ Preserve all Step 01 Project Background fields from group data
+        // These should NEVER be overwritten with farmer-specific data
+        final projectBackgroundFields = [
+          'fcaName',
+          'reportingPeriod',
+          'projectTitle',
+          'implementationType',
+          'region',
+          'province',
+          'municipality',
+          'barangay',
+          'primaryIntervention',
+          'primaryInterventionOther',
+          'supportInterventions',
+        ];
+        
+        final groupProjectBackground = <String, dynamic>{};
+        
+        // ✅ Use fresh group.json data from local storage (not cached data)
+        // This ensures we have the latest project background fields
+        print('   📂 Using FRESH group.json data for project background');
+        for (final key in projectBackgroundFields) {
+          if (freshGroupData.containsKey(key)) {
+            groupProjectBackground[key] = freshGroupData[key];
+            print('      ✅ Field "$key": ${freshGroupData[key]}');
+          }
+        }
+
+        // ✅ Now merge farmer-specific data (step 02-07)
+        if (memberData != null && memberData.isNotEmpty) {
+          // Only merge farmer-specific fields, NOT group fields
+          for (final entry in memberData.entries) {
+            if (!projectBackgroundFields.contains(entry.key)) {
+              mergedData[entry.key] = entry.value;
+            }
+          }
+        }
+
+        // ✅ Re-apply group project background to ensure it's never lost
+        mergedData.addAll(groupProjectBackground);
+
+        print('🔍 DEBUG: After merging group project background for $actualFarmerName:');
+        for (final key in projectBackgroundFields) {
+          final value = mergedData[key];
+          print('   - $key: "$value"');
+        }
+
+        if (commodities.isNotEmpty) {
+          // ✅ CRITICAL: Preserve the ENTIRE completedCommodities array for display
+          // Don't just take the first commodity - we need all of them for the modal
+          mergedData['completedCommodities'] = commodities;
+
+          // Also add the first commodity's fields for backward compatibility with top-level display
+          final commodityData = commodities.first as Map<String, dynamic>;
+          // Don't overwrite project background when merging commodity data
+          for (final entry in commodityData.entries) {
+            if (!projectBackgroundFields.contains(entry.key)) {
+              mergedData[entry.key] = entry.value;
+            }
+          }
+        }
+
+        final trainings = (memberData?['trainings'] as List?) ??
+            (widget.record.data?['trainings'] as List?) ??
+            [];
+        if (trainings.isNotEmpty) {
+          mergedData['trainings'] = trainings;
+        }
+
+        // Create record with merged data
+        final individualRecord = RecordModel(
+          id: widget.record.id,
+          name: widget.record.name,
+          productionType: widget.record.productionType,
+          implType: widget.record.implType,
+          enumerator: widget.record.enumerator,
+          date: widget.record.date,
+          status: widget.record.status,
+          documentPath: widget.record.documentPath,
+          data: mergedData,
+          isLocal: widget.record.isLocal,
+        );
+
+        // ✅ CRITICAL: Use SAAD ID as unique key (not farmer name) to avoid overwrites
+        // when multiple farmers have the same name
+        final uniqueKey = actualSaadId.isNotEmpty
+            ? actualSaadId
+            : '${actualFarmerName}_${widget.record.data?.hashCode}';
+
+        members[uniqueKey] = _DynamicMemberRecord(
+          member: MemberModel(
+            name: actualFarmerName,
+            status:
+                widget.record.status == 'unsync' ? 'in_progress' : 'completed',
+          ),
+          record: individualRecord,
+        );
+
+        print(
+            '   ✅ Added member to map with key: "$uniqueKey" (farmer: $actualFarmerName, saadId: $actualSaadId)');
       }
 
-      // Create record with merged data
-      final individualRecord = RecordModel(
-        id: widget.record.id,
-        name: widget.record.name,
-        productionType: widget.record.productionType,
-        implType: widget.record.implType,
-        enumerator: widget.record.enumerator,
-        date: widget.record.date,
-        status: widget.record.status,
-        documentPath: widget.record.documentPath,
-        data: mergedData,
-        isLocal: widget.record.isLocal,
-      );
-
-      members[actualFarmerName] = _DynamicMemberRecord(
-        member: MemberModel(
-          name: actualFarmerName,
-          status:
-              widget.record.status == 'unsync' ? 'in_progress' : 'completed',
-        ),
-        record: individualRecord,
-      );
+      final q = _query.toLowerCase();
+      final result = members.values
+          .where(
+              (item) => q.isEmpty || item.member.name.toLowerCase().contains(q))
+          .toList()
+        ..sort((a, b) => a.member.name.compareTo(b.member.name));
+      return result;
+    } catch (e) {
+      print('❌ ERROR in _loadMembers: $e');
+      return [];
     }
-
-    final q = _query.toLowerCase();
-    return members.values
-        .where(
-            (item) => q.isEmpty || item.member.name.toLowerCase().contains(q))
-        .toList()
-      ..sort((a, b) => a.member.name.compareTo(b.member.name));
   }
 
   String _formatDate(String? raw) {
@@ -702,7 +1104,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
   }
 
   // ── Navigate to step 2 of the correct production type ────────
-  Future<void> _addCommodityForMember(String farmerName) async {
+  Future<void> _addCommodityForMember(String farmerName, String saadId) async {
     final type = widget.record.productionType.toLowerCase();
     final fcaName = _targetFcaNameForNavigation();
     final data = Map<String, dynamic>.from(
@@ -731,6 +1133,8 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
             (data['primaryInterventionOther'] as String? ?? '').trim()
         ..supportInterventions = List<String>.from(supportInterventions)
         ..farmerName = farmerName
+        ..saadIdNo = saadId // ✅ Set SAAD ID for unique identification
+        ..isAddingNewCommodity = true // ✅ Adding commodity to existing farmer
         ..members = existingMembers;
       await Navigator.of(context).pushNamed(AppRoutes.cropStep2, arguments: w);
     } else if (type == 'livestock') {
@@ -745,6 +1149,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         ..primaryIntervention = (data['primaryIntervention'] as String?)?.trim()
         ..supportInterventions = List<String>.from(supportInterventions)
         ..farmerName = farmerName
+        ..saadIdNo = saadId // ✅ Set SAAD ID for unique identification
         ..members = existingMembers;
       await Navigator.of(context)
           .pushNamed(AppRoutes.livestockStep2, arguments: w);
@@ -761,6 +1166,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         ..primaryIntervention = (data['primaryIntervention'] as String?)?.trim()
         ..supportInterventions = List<String>.from(supportInterventions)
         ..farmerName = farmerName
+        ..saadIdNo = saadId // ✅ Set SAAD ID for unique identification
         ..members = existingMembers;
       await Navigator.of(context)
           .pushNamed(AppRoutes.poultryStep2, arguments: w);
@@ -1069,31 +1475,34 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Search
-                      Container(
-                        decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(50),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black.withOpacity(0.07),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2))
-                            ]),
-                        child: TextField(
-                          controller: _searchCtrl,
-                          style: GoogleFonts.poppins(fontSize: 13),
-                          decoration: InputDecoration(
-                              hintText: 'Search member name',
-                              hintStyle: GoogleFonts.poppins(
-                                  fontSize: 13, color: DAColors.textMuted),
-                              prefixIcon: const Icon(Icons.search_rounded,
-                                  color: DAColors.textMuted, size: 22),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 14)),
+                      if (widget.record.implType.toLowerCase() !=
+                          'collective') ...[
+                        Container(
+                          decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(50),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: Colors.black.withOpacity(0.07),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2))
+                              ]),
+                          child: TextField(
+                            controller: _searchCtrl,
+                            style: GoogleFonts.poppins(fontSize: 13),
+                            decoration: InputDecoration(
+                                hintText: 'Search member name',
+                                hintStyle: GoogleFonts.poppins(
+                                    fontSize: 13, color: DAColors.textMuted),
+                                prefixIcon: const Icon(Icons.search_rounded,
+                                    color: DAColors.textMuted, size: 22),
+                                border: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 14)),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 20),
+                        const SizedBox(height: 20),
+                      ],
 
                       // ── Add Another Farmer button (top) ───────────────
                       if (widget.record.implType.toLowerCase() !=
@@ -1284,76 +1693,102 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                                 ]),
                               ),
                             ],
-
-                            // ── Members Monitoring ─────────────────────────
-                            // Only show for non-collective types (collectives have no members)
-                            if (widget.record.implType.toLowerCase() !=
-                                'collective') ...[
-                              const SizedBox(height: 14),
-                              const Divider(
-                                  height: 1, color: Color(0xFFF0F0F0)),
-                              const SizedBox(height: 14),
-                              Text('Members Monitoring',
-                                  style: GoogleFonts.poppins(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: DAColors.textDark)),
-                              const SizedBox(height: 10),
-                              FutureBuilder<List<_DynamicMemberRecord>>(
-                                future: _membersFuture,
-                                builder: (context, snapshot) {
-                                  final members = snapshot.data ??
-                                      const <_DynamicMemberRecord>[];
-                                  if (snapshot.connectionState ==
-                                      ConnectionState.waiting) {
-                                    return const Padding(
-                                      padding: EdgeInsets.only(top: 20),
-                                      child: Center(
-                                        child: CircularProgressIndicator(
-                                            color: DAColors.greenMid),
-                                      ),
-                                    );
-                                  }
-
-                                  if (members.isEmpty) {
-                                    return Center(
-                                        child: Padding(
-                                      padding: const EdgeInsets.only(top: 20),
-                                      child: Text(
-                                          _remoteStatusMessage ??
-                                              'No member records found',
-                                          textAlign: TextAlign.center,
-                                          style: GoogleFonts.poppins(
-                                              fontSize: 12,
-                                              color: DAColors.textMuted)),
-                                    ));
-                                  }
-
-                                  return ListView.separated(
-                                    shrinkWrap: true,
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
-                                    itemCount: members.length,
-                                    separatorBuilder: (_, __) =>
-                                        const SizedBox(height: 10),
-                                    itemBuilder: (ctx, i) {
-                                      final memberRecord = members[i];
-                                      return _MemberCard(
-                                        member: memberRecord.member,
-                                        onView: () => _viewMember(memberRecord),
-                                        onAddCommodity: () =>
-                                            _addCommodityForMember(
-                                                memberRecord.member.name),
-                                      );
-                                    },
-                                  );
-                                },
-                              ),
-                            ],
                           ],
                         ),
                       ),
                       const SizedBox(height: 24),
+
+                      // ── Members section (HYBRID/INDIVIDUAL ONLY) ───────────────────────────────
+                      if (widget.record.implType.toLowerCase() !=
+                          'collective') ...[
+                        const _SectionLabel(label: 'Members'),
+                        const SizedBox(height: 10),
+                        FutureBuilder<List<_DynamicMemberRecord>>(
+                          future: _membersFuture,
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                  ),
+                                ),
+                              );
+                            }
+
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(children: [
+                                    const Icon(Icons.error_outline_rounded,
+                                        color: Colors.red, size: 40),
+                                    const SizedBox(height: 12),
+                                    Text('Error loading members',
+                                        style: GoogleFonts.poppins(
+                                            fontSize: 13, color: Colors.red)),
+                                  ]),
+                                ),
+                              );
+                            }
+
+                            final members = snapshot.data ?? [];
+                            print(
+                                '✅ Members list prepared: ${members.length} members');
+                            for (int i = 0; i < members.length; i++) {
+                              final m = members[i];
+                              final commoditiesCount =
+                                  (m.record.data?['completedCommodities']
+                                              as List?)
+                                          ?.length ??
+                                      0;
+                              print(
+                                  '   [$i] ${m.member.name} - commodities in data: $commoditiesCount');
+                            }
+                            if (members.isEmpty) {
+                              return Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(children: [
+                                    const Icon(Icons.people_outline_rounded,
+                                        color: DAColors.textMuted, size: 40),
+                                    const SizedBox(height: 12),
+                                    Text('No members found',
+                                        style: GoogleFonts.poppins(
+                                            fontSize: 13,
+                                            color: DAColors.textMuted)),
+                                  ]),
+                                ),
+                              );
+                            }
+
+                            return Column(
+                              children: [
+                                for (final memberRecord in members)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 16),
+                                    child: _MemberCard(
+                                      member: memberRecord.member,
+                                      onView: () => _viewMember(memberRecord),
+                                      onAddCommodity: () {
+                                        final saadId = (memberRecord.record
+                                                        .data?['saadIdNo']
+                                                    as String? ??
+                                                '')
+                                            .trim();
+                                        _addCommodityForMember(
+                                            memberRecord.member.name, saadId);
+                                      },
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 24),
+                      ], // Close if (widget.record.implType.toLowerCase() != 'collective')
                     ]),
               ),
             ),

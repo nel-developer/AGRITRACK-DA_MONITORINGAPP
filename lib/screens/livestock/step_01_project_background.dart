@@ -337,27 +337,17 @@ class _LivestockStep1ProjectBackgroundState
   String _othersSpecify = '';
 
   bool _canProceed() {
-    // Only validate purpose fields for individual production
-    if (c.implementationType == 'individual') {
-      final purposeSelected =
-          c.purposeBreeding || c.purposeMeat || c.purposeDairy;
-      return c.fcaName.isNotEmpty &&
-          c.region != null &&
-          c.province != null &&
-          c.municipality != null &&
-          c.barangay != null &&
-          c.projectTitle.isNotEmpty &&
-          c.primaryIntervention != null &&
-          purposeSelected;
-    }
-    // For collective/hybrid, purpose fields not required
+    // Purpose of production required for ALL implementation types
+    final purposeSelected =
+        c.purposeBreeding || c.purposeMeat || c.purposeDairy;
     return c.fcaName.isNotEmpty &&
         c.region != null &&
         c.province != null &&
         c.municipality != null &&
         c.barangay != null &&
         c.projectTitle.isNotEmpty &&
-        c.primaryIntervention != null;
+        c.primaryIntervention != null &&
+        purposeSelected;
   }
 
   void _next() {
@@ -546,28 +536,25 @@ class _LivestockStep1ProjectBackgroundState
                   color: DAColors.greenMid)),
         ]),
       ),
-      // Purpose fields only shown for individual production type
-      if (c.implementationType == 'individual') ...[
-        const SizedBox(height: 28),
-        _buildLabel('Purpose of Production'),
-        const SizedBox(height: 12),
-        _buildCheckbox(
-            label: 'Breeding',
-            value: c.purposeBreeding,
-            onChanged: (v) => setState(() => c.purposeBreeding = v ?? false)),
-        const SizedBox(height: 10),
-        _buildCheckbox(
-            label: 'Meat / Fattener',
-            value: c.purposeMeat,
-            onChanged: (v) => setState(() => c.purposeMeat = v ?? false)),
-        const SizedBox(height: 10),
-        _buildCheckbox(
-            label: 'Dairy',
-            value: c.purposeDairy,
-            onChanged: (v) => setState(() => c.purposeDairy = v ?? false)),
-        const SizedBox(height: 32),
-      ] else
-        const SizedBox(height: 28),
+      // Purpose fields shown for ALL production types (individual, collective, hybrid)
+      const SizedBox(height: 28),
+      _buildLabel('Purpose of Production'),
+      const SizedBox(height: 12),
+      _buildCheckbox(
+          label: 'Breeding',
+          value: c.purposeBreeding,
+          onChanged: (v) => setState(() => c.purposeBreeding = v ?? false)),
+      const SizedBox(height: 10),
+      _buildCheckbox(
+          label: 'Meat / Fattener',
+          value: c.purposeMeat,
+          onChanged: (v) => setState(() => c.purposeMeat = v ?? false)),
+      const SizedBox(height: 10),
+      _buildCheckbox(
+          label: 'Dairy',
+          value: c.purposeDairy,
+          onChanged: (v) => setState(() => c.purposeDairy = v ?? false)),
+      const SizedBox(height: 32),
     ]);
   }
 

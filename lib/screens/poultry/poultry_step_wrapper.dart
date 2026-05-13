@@ -59,6 +59,9 @@ class PoultryStepWrapper {
   // True when navigating straight to Step 2 to add a new farmer (skip Step 1)
   bool isAddFarmer = false;
 
+  // ✅ True when adding a new commodity to existing farmer (clear commodity fields)
+  bool isAddingNewCommodity = false;
+
   // ── Step 2: Poultry Information ──────────────────────────────
   String saadIdNo = '';
   Map<String, dynamic> approvedFarmerProfile = {};
@@ -247,4 +250,7 @@ class PoultryStepWrapper {
       'farmPhoto': farmPhoto,
     };
   }
+
+  /// Returns the production type for this wrapper
+  String get productionType => 'poultry';
 }

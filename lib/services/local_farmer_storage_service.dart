@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 class LocalFarmerStorageService {
@@ -32,9 +33,16 @@ class LocalFarmerStorageService {
   }
 
   Future<Directory> _getAndroidVisibleStorageDirectory() async {
-    final appExternalDir = await getExternalStorageDirectory();
-    if (appExternalDir == null) {
-      throw Exception('Unable to resolve Android external storage directory.');
+    Directory? appExternalDir;
+
+    try {
+      // Use platform channel to get the correct Android external files dir
+      const platform = MethodChannel('com.example.da_monitoring_app/storage');
+      final String result = await platform.invokeMethod('getExternalFilesDir');
+      appExternalDir = Directory(result);
+    } catch (e) {
+      print('⚠️ Platform channel failed: $e, falling back to app docs');
+      appExternalDir = await getApplicationDocumentsDirectory();
     }
 
     if (!await appExternalDir.exists()) {
@@ -112,6 +120,7 @@ class LocalFarmerStorageService {
 
   /// Get the farmer folder path
   /// Folder name format: "SAADID" (fallback to unknown_farmer if empty)
+  /// Also checks for legacy format: "FARMERNAME_SAADID"
   Future<Directory> _getFarmerDirectory(
       String groupName, String farmerName, String saadId,
       {required String productionType,
@@ -128,16 +137,64 @@ class LocalFarmerStorageService {
         ? saadId.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
         : '';
     final sanitizedFarmerName = farmerName.trim().isNotEmpty
-        ? farmerName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        ? farmerName
+            .trim()
+            .replaceAll(RegExp(r'\s+'), '_') // Replace spaces with underscore
+            .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_') // Remove special chars
         : '';
 
-    final folderName = sanitizedSaadId.isNotEmpty
-        ? sanitizedSaadId
-        : (sanitizedFarmerName.isNotEmpty
-            ? sanitizedFarmerName
-            : 'unknown_farmer');
+    print('📁 _getFarmerDirectory DEBUG:');
+    print('   Original: farmerName="$farmerName", saadId="$saadId"');
+    print(
+        '   Sanitized: farmerName="$sanitizedFarmerName", saadId="$sanitizedSaadId"');
 
-    final farmerDir = Directory('${groupDir.path}/$folderName');
+    // Try new format first: just saadId
+    var farmerDir = Directory('${groupDir.path}/$sanitizedSaadId');
+    print('   Checking format 1 (saadId): ${farmerDir.path}');
+    print('      Exists: ${await farmerDir.exists()}');
+
+    // If not found, try legacy format: farmerName_saadId
+    if (!await farmerDir.exists() &&
+        sanitizedSaadId.isNotEmpty &&
+        sanitizedFarmerName.isNotEmpty) {
+      farmerDir =
+          Directory('${groupDir.path}/${sanitizedFarmerName}_$sanitizedSaadId');
+      print('   Checking format 2 (farmerName_saadId): ${farmerDir.path}');
+      print('      Exists: ${await farmerDir.exists()}');
+    }
+
+    // If still not found, try just farmerName
+    if (!await farmerDir.exists() && sanitizedFarmerName.isNotEmpty) {
+      farmerDir = Directory('${groupDir.path}/$sanitizedFarmerName');
+      print('   Checking format 3 (farmerName only): ${farmerDir.path}');
+      print('      Exists: ${await farmerDir.exists()}');
+    }
+
+    // If none exist, list what's actually in the group directory
+    if (!await farmerDir.exists()) {
+      print('   ❌ No matching folder found. Group directory contents:');
+      try {
+        final contents = groupDir.listSync();
+        for (final item in contents) {
+          if (item is Directory) {
+            final name = item.path.split('/').last;
+            print('      📁 $name');
+          }
+        }
+      } catch (e) {
+        print('      Could not list group directory: $e');
+      }
+
+      // Create using saadId format as fallback
+      final folderName = sanitizedSaadId.isNotEmpty
+          ? sanitizedSaadId
+          : (sanitizedFarmerName.isNotEmpty
+              ? sanitizedFarmerName
+              : 'unknown_farmer');
+      farmerDir = Directory('${groupDir.path}/$folderName');
+      print('   Creating new folder: ${farmerDir.path}');
+      await farmerDir.create(recursive: true);
+    }
 
     if (!await farmerDir.exists()) {
       await farmerDir.create(recursive: true);
@@ -205,44 +262,60 @@ class LocalFarmerStorageService {
     required String farmerName,
     required String saadId,
   }) async {
-    final farmerDir = await _getFarmerDirectory(
+    print('🔍 getFarmerData called:');
+    print('   productionType: $productionType');
+    print('   groupName: $groupName');
+    print('   farmerName: $farmerName');
+    print('   saadId: $saadId');
+
+    final groupDir = await _getGroupDirectory(
       groupName,
-      farmerName,
-      saadId,
       productionType: productionType,
     );
-    final dataFile = File('${farmerDir.path}/data.json');
 
-    if (!await dataFile.exists()) {
-      return null;
+    final sanitizedSaadId = saadId.trim().isNotEmpty
+        ? saadId.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        : '';
+    final sanitizedFarmerName = farmerName.trim().isNotEmpty
+        ? farmerName
+            .trim()
+            .replaceAll(RegExp(r'\s+'), '_') // Replace spaces with underscore
+            .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_') // Remove special chars
+        : '';
+
+    // Try multiple folder formats and check which one has data.json
+    List<String> folderFormatsToTry = [];
+
+    if (sanitizedSaadId.isNotEmpty) {
+      folderFormatsToTry.add(sanitizedSaadId);
     }
 
-    final content = await dataFile.readAsString();
-    return jsonDecode(content) as Map<String, dynamic>;
-  }
+    if (sanitizedSaadId.isNotEmpty && sanitizedFarmerName.isNotEmpty) {
+      folderFormatsToTry.add('${sanitizedFarmerName}_$sanitizedSaadId');
+    }
 
-  /// Get farmer picture
-  Future<File?> getFarmerPicture({
-    required String productionType,
-    required String groupName,
-    required String farmerName,
-    required String saadId,
-  }) async {
-    final farmerDir = await _getFarmerDirectory(
-      groupName,
-      farmerName,
-      saadId,
-      productionType: productionType,
-    );
+    if (sanitizedFarmerName.isNotEmpty) {
+      folderFormatsToTry.add(sanitizedFarmerName);
+    }
 
-    // Check for common image formats
-    for (final extension in ['jpg', 'jpeg', 'png', 'gif']) {
-      final pictureFile = File('${farmerDir.path}/picture.$extension');
-      if (await pictureFile.exists()) {
-        return pictureFile;
+    // Try each format and return the one that has data.json
+    for (final folderName in folderFormatsToTry) {
+      final farmerDir = Directory('${groupDir.path}/$folderName');
+      final dataFile = File('${farmerDir.path}/data.json');
+
+      print('   Trying: $folderName');
+      print('      Path: ${farmerDir.path}');
+      print('      data.json exists: ${await dataFile.exists()}');
+
+      if (await dataFile.exists()) {
+        print('   ✅ Found data.json in format: $folderName');
+        final content = await dataFile.readAsString();
+        print('   ✅ data.json read successfully (${content.length} bytes)');
+        return jsonDecode(content) as Map<String, dynamic>;
       }
     }
 
+    print('   ❌ data.json NOT FOUND in any format');
     return null;
   }
 
@@ -328,6 +401,14 @@ class LocalFarmerStorageService {
     }
   }
 
+  /// Delete a group record (alias for deleteGroup)
+  Future<void> deleteGroupRecord({
+    required String productionType,
+    required String groupName,
+  }) async {
+    await deleteGroup(productionType, groupName);
+  }
+
   /// Get group folder path (for browsing/debugging)
   Future<String> getGroupFolderPath(
       String productionType, String groupName) async {
@@ -404,6 +485,7 @@ class LocalFarmerStorageService {
   }
 
   /// Get saved group metadata
+  /// Checks both group_data.json (new) and group.json (old) for backward compatibility
   Future<Map<String, dynamic>?> getGroupData({
     required String productionType,
     required String groupName,
@@ -412,7 +494,13 @@ class LocalFarmerStorageService {
       groupName,
       productionType: productionType,
     );
-    final groupDataFile = File('${groupDir.path}/group_data.json');
+
+    // Try new format first
+    var groupDataFile = File('${groupDir.path}/group_data.json');
+    if (!await groupDataFile.exists()) {
+      // Fall back to old format
+      groupDataFile = File('${groupDir.path}/group.json');
+    }
 
     if (!await groupDataFile.exists()) {
       return null;
@@ -474,6 +562,7 @@ class LocalFarmerStorageService {
 
     // Iterate through all production types (crop, livestock, poultry)
     final contents = baseDir.listSync();
+
     for (final productionEntity in contents) {
       if (productionEntity is! Directory) continue;
 
@@ -482,38 +571,106 @@ class LocalFarmerStorageService {
 
       // Iterate through all groups
       final groupContents = productionEntity.listSync();
+
       for (final groupEntity in groupContents) {
         if (groupEntity is! Directory) continue;
 
         final groupName = groupEntity.path.split(Platform.pathSeparator).last;
 
-        // Iterate through all farmers in this group
-        final farmerContents = groupEntity.listSync();
-        for (final farmerEntity in farmerContents) {
-          if (farmerEntity is! Directory) continue;
+        // Check if this is a COLLECTIVE (group.json at root, no farmer subfolders)
+        final groupJsonFile = File('${groupEntity.path}/group.json');
+        final groupJsonExists = await groupJsonFile.exists();
 
-          final farmerFolder =
-              farmerEntity.path.split(Platform.pathSeparator).last;
-          final dataFile = File('${farmerEntity.path}/data.json');
+        // Iterate through contents to detect type
+        final groupContentsForDetection = groupEntity.listSync();
+        var hasOnlyGroupJson = true;
+        var farmerSubfolderCount = 0;
 
-          if (await dataFile.exists()) {
+        for (final item in groupContentsForDetection) {
+          if (item is Directory) {
+            farmerSubfolderCount++;
+            hasOnlyGroupJson = false;
+          } else if (item is File &&
+              !item.path.endsWith('group.json') &&
+              !item.path.endsWith('.jpg')) {
+            hasOnlyGroupJson = false;
+          }
+        }
+
+        final isCollective =
+            groupJsonExists && hasOnlyGroupJson && farmerSubfolderCount == 0;
+
+        if (isCollective && groupJsonExists) {
+          // COLLECTIVE: Load data from group.json directly
+          try {
+            final content = await groupJsonFile.readAsString();
+            final data = jsonDecode(content) as Map<String, dynamic>;
+
+            records.add({
+              'productionType': productionType,
+              'groupName': groupName,
+              'farmerName': groupName,
+              'saadId': groupName,
+              'implType': 'collective',
+              'data': data,
+            });
+          } catch (e) {
+            print('❌ Failed to read collective from $groupName: $e');
+          }
+        } else {
+          // INDIVIDUAL/HYBRID: Load from farmer subfolders
+          // ALSO load group.json for project background
+          Map<String, dynamic>? groupData;
+          if (groupJsonExists) {
             try {
-              final content = await dataFile.readAsString();
-              final data = jsonDecode(content) as Map<String, dynamic>;
-
-              // Extract farmer info from data
-              final farmerName = (data['farmerName'] as String? ?? '').trim();
-              final saadId = (data['saadIdNo'] as String? ?? '').trim();
-
-              records.add({
-                'productionType': productionType,
-                'groupName': groupName,
-                'farmerName': farmerName.isEmpty ? farmerFolder : farmerName,
-                'saadId': saadId.isEmpty ? farmerFolder : saadId,
-                'data': data,
-              });
+              final content = await groupJsonFile.readAsString();
+              groupData = jsonDecode(content) as Map<String, dynamic>;
             } catch (e) {
-              print('⚠️ Failed to read unsync record from $farmerFolder: $e');
+              print('❌ Failed to read group.json: $e');
+            }
+          }
+
+          for (final farmerEntity in groupContentsForDetection) {
+            if (farmerEntity is! Directory) continue;
+
+            final farmerFolder =
+                farmerEntity.path.split(Platform.pathSeparator).last;
+            final dataFile = File('${farmerEntity.path}/data.json');
+
+            if (await dataFile.exists()) {
+              try {
+                final content = await dataFile.readAsString();
+                final data = jsonDecode(content) as Map<String, dynamic>;
+
+                // Extract farmer info from data
+                final farmerName = (data['farmerName'] as String? ?? '').trim();
+                final saadId = (data['saadIdNo'] as String? ?? '').trim();
+
+                // Determine if Individual or Hybrid based on number of farmers
+                final farmerCount = groupContentsForDetection
+                    .whereType<Directory>()
+                    .where((dir) => File('${dir.path}/data.json').existsSync())
+                    .length;
+                final implType = farmerCount == 1 ? 'individual' : 'hybrid';
+
+                // MERGE group background + farmer data
+                final mergedData = {
+                  ...?groupData, // Add group.json data first (fcaName, projectTitle, etc)
+                  ...data, // Then override with farmer-specific data
+                };
+
+                records.add({
+                  'productionType': productionType,
+                  'groupName': groupName,
+                  'farmerName': farmerName.isEmpty ? farmerFolder : farmerName,
+                  'saadId': saadId.isEmpty ? farmerFolder : saadId,
+                  'implType': implType,
+                  'data': mergedData,
+                });
+              } catch (e) {
+                print(
+                    '❌ Failed to read record from $groupName/$farmerFolder: $e');
+              }
             }
           }
         }
@@ -521,5 +678,198 @@ class LocalFarmerStorageService {
     }
 
     return records;
+  }
+
+  /// Delete a record by group name and production type
+  Future<void> deleteRecord(String productionType, String groupName) async {
+    try {
+      final baseDir = await _getMonitoringDirectory();
+      final productionDir = Directory(
+          '${baseDir.path}/${_buildProductionTypeFolderName(productionType)}');
+      final groupDir = Directory('${productionDir.path}/$groupName');
+
+      if (await groupDir.exists()) {
+        print('🗑️ Deleting folder: ${groupDir.path}');
+        await groupDir.delete(recursive: true);
+        print('✅ Deleted folder: $groupName from $productionType');
+      } else {
+        print('⚠️ Folder not found: ${groupDir.path}');
+      }
+    } catch (e) {
+      print('❌ Error deleting record: $e');
+      rethrow;
+    }
+  }
+
+  /// Delete a specific farmer record within a group
+  Future<void> deleteFarmerRecord(
+      String productionType, String groupName, String farmerFolderName) async {
+    try {
+      final baseDir = await _getMonitoringDirectory();
+      final productionDir = Directory(
+          '${baseDir.path}/${_buildProductionTypeFolderName(productionType)}');
+      final groupDir = Directory('${productionDir.path}/$groupName');
+      final farmerDir = Directory('${groupDir.path}/$farmerFolderName');
+
+      if (await farmerDir.exists()) {
+        print('🗑️ Deleting farmer folder: ${farmerDir.path}');
+        await farmerDir.delete(recursive: true);
+        print('✅ Deleted farmer: $farmerFolderName from $groupName');
+      } else {
+        print('⚠️ Farmer folder not found: ${farmerDir.path}');
+      }
+    } catch (e) {
+      print('❌ Error deleting farmer record: $e');
+      rethrow;
+    }
+  }
+
+  /// Get all commodities for a farmer from data.json
+  /// Returns list of commodity maps
+  Future<List<Map<String, dynamic>>> getFarmerCommodities({
+    required String productionType,
+    required String groupName,
+    required String farmerName,
+    required String saadId,
+  }) async {
+    final data = await getFarmerData(
+      productionType: productionType,
+      groupName: groupName,
+      farmerName: farmerName,
+      saadId: saadId,
+    );
+
+    if (data == null) return [];
+
+    final commodities =
+        (data['completedCommodities'] as List?)?.cast<Map<String, dynamic>>() ??
+            [];
+    return commodities;
+  }
+
+  /// Get all trainings for a farmer from data.json
+  /// Returns list of training maps
+  Future<List<Map<String, dynamic>>> getFarmerTrainings({
+    required String productionType,
+    required String groupName,
+    required String farmerName,
+    required String saadId,
+  }) async {
+    final data = await getFarmerData(
+      productionType: productionType,
+      groupName: groupName,
+      farmerName: farmerName,
+      saadId: saadId,
+    );
+
+    if (data == null) return [];
+
+    final trainings =
+        (data['trainings'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    return trainings;
+  }
+
+  /// Append a new commodity to farmer's data.json
+  /// Merges with existing commodities without overwriting
+  /// Also saves commodity picture if provided
+  Future<void> appendCommodityToFarmer({
+    required String productionType,
+    required String groupName,
+    required String farmerName,
+    required String saadId,
+    required Map<String, dynamic> newCommodity,
+    Map<String, dynamic>? farmerMeta,
+    List<int>? commodityPictureBytes,
+    String commodityImageExtension = 'jpg',
+  }) async {
+    final farmerDir = await _getFarmerDirectory(
+      groupName,
+      farmerName,
+      saadId,
+      productionType: productionType,
+    );
+    final dataFile = File('${farmerDir.path}/data.json');
+
+    // Load existing data
+    Map<String, dynamic> data = {};
+    if (await dataFile.exists()) {
+      final content = await dataFile.readAsString();
+      data = jsonDecode(content) as Map<String, dynamic>;
+    }
+
+    // Get existing commodities list
+    final commoditiesList =
+        (data['completedCommodities'] as List?) ?? <Map<String, dynamic>>[];
+    final existingCommodities =
+        commoditiesList.cast<Map<String, dynamic>>().toList();
+
+    // Append new commodity
+    existingCommodities.add(newCommodity);
+
+    // Update data with merged commodities
+    data['completedCommodities'] = existingCommodities;
+
+    // Merge farmerMeta if provided (trainings, etc)
+    if (farmerMeta != null) {
+      for (final entry in farmerMeta.entries) {
+        if (entry.key == 'trainings' && entry.value is List) {
+          // Merge trainings without duplicates
+          final existingTrainings =
+              (data['trainings'] as List?) ?? <Map<String, dynamic>>[];
+          final newTrainings =
+              (entry.value as List).cast<Map<String, dynamic>>();
+
+          final mergedTrainings = <Map<String, dynamic>>[
+            ...existingTrainings.cast<Map<String, dynamic>>(),
+          ];
+
+          for (final newTraining in newTrainings) {
+            final exists = mergedTrainings
+                .any((old) => jsonEncode(old) == jsonEncode(newTraining));
+            if (!exists) {
+              mergedTrainings.add(newTraining);
+            }
+          }
+
+          data['trainings'] = mergedTrainings;
+        } else {
+          data[entry.key] = entry.value;
+        }
+      }
+    }
+
+    // Save updated data.json
+    await dataFile.writeAsString(jsonEncode(data));
+    print(
+        '📝 LocalFarmerStorageService: appended commodity to ${dataFile.path}');
+
+    // Save commodity picture if provided
+    if (commodityPictureBytes != null && commodityPictureBytes.isNotEmpty) {
+      final variety = (newCommodity['variety'] as String? ?? '').trim();
+      
+      // Get GPS coordinates from photoGPS if available
+      final photoGPS = newCommodity['photoGPS'] as Map<String, dynamic>? ?? {};
+      final latitude = photoGPS['latitude'];
+      final longitude = photoGPS['longitude'];
+      
+      // Format filename: crops_{variety}_{latitude}_{longitude}.jpg
+      String pictureName;
+      if (variety.isNotEmpty && latitude != null && longitude != null) {
+        // Format coordinates: remove decimal point and limit precision
+        final latStr = latitude.toString().replaceAll('.', '_');
+        final lonStr = longitude.toString().replaceAll('.', '_');
+        pictureName = 'crops_${variety}_${latStr}_${lonStr}.$commodityImageExtension';
+      } else if (variety.isNotEmpty) {
+        pictureName = 'crops_$variety.$commodityImageExtension';
+      } else {
+        pictureName = 'commodity.$commodityImageExtension';
+      }
+      
+      final pictureFile = File('${farmerDir.path}/$pictureName');
+
+      await pictureFile.writeAsBytes(commodityPictureBytes);
+      print(
+          '📸 LocalFarmerStorageService: saved commodity picture to ${pictureFile.path}');
+    }
   }
 }
