@@ -72,6 +72,31 @@ class RecordViewModal extends StatelessWidget {
     final screenH = MediaQuery.of(context).size.height;
     final botPad = MediaQuery.of(context).padding.bottom;
     final type = record.productionType.toLowerCase();
+    
+    // ✅ CRITICAL: For PENDING records, use ONLY Firebase data, no local loading
+    if (record.status == 'pending') {
+      print('🔍 RecordViewModal: PENDING record detected - using Firebase data ONLY');
+      print('   - Record status: ${record.status}');
+      print('   - Record implType: ${record.implType}');
+      print('   - Record data keys: ${record.data?.keys.toList()}');
+      print('   - Record data length: ${(record.data as Map?)?.length ?? 0}');
+      if (record.data is Map<String, dynamic>) {
+        final d = record.data as Map<String, dynamic>;
+        print('   - Checking for damage fields in Firebase:');
+        print('      hasPest: ${d['hasPest']}');
+        print('      pestOccurrence: ${d['pestOccurrence']}');
+        print('      pestDamageArea: ${d['pestDamageArea']}');
+        print('   - Checking for local-only fields:');
+        print('      group.json data present: ${d['completedCommodities'] != null}');
+        if (d['completedCommodities'] is List && (d['completedCommodities'] as List).isNotEmpty) {
+          final firstCommodity = (d['completedCommodities'] as List).first;
+          if (firstCommodity is Map<String, dynamic>) {
+            print('      First commodity keys: ${firstCommodity.keys.toList()}');
+          }
+        }
+      }
+    }
+    
     final data =
         Map<String, dynamic>.from(record.data ?? const <String, dynamic>{});
 
@@ -415,7 +440,7 @@ class _DynamicRecordFields extends StatelessWidget {
     print('   - barangay: ${data["barangay"]}');
     print('   - primaryIntervention: ${data["primaryIntervention"]}');
     print('   - supportInterventions: ${data["supportInterventions"]}');
-    
+
     final isCollective =
         data['implementationType']?.toString().toLowerCase() == 'collective';
     final shouldShowCommodities = (type == 'crop' && !isGroup) ||
@@ -436,6 +461,14 @@ class _DynamicRecordFields extends StatelessWidget {
         for (int i = 0; i < commodities.length; i++) {
           final c = commodities[i];
           print('   - commodity[$i]: ${c['typeOfCrop']} ${c['variety']}');
+          // ✅ DEBUG: Check if damage fields exist
+          if (c is Map<String, dynamic>) {
+            print('      - hasPest: ${c['hasPest']}');
+            print('      - pestOccurrence: ${c['pestOccurrence']}');
+            print('      - pestDamageArea: ${c['pestDamageArea']}');
+            print('      - pestDamageHa: ${c['pestDamageHa']}');
+            print('      - pestTreatment: ${c['pestTreatment']}');
+          }
         }
       }
       if (commodities.isNotEmpty) {
@@ -489,7 +522,13 @@ class _DynamicRecordFields extends StatelessWidget {
                       fontSize: 12, color: DAColors.textMuted),
                 ),
                 childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                children: commoditySections.expand<Widget>((section) {
+                children: commoditySections
+                    .asMap()
+                    .entries
+                    .expand<Widget>((sectionEntry) {
+                  final sectionIndex = sectionEntry.key;
+                  final section = sectionEntry.value;
+
                   // For group views, skip farmer-specific fields
                   final fieldsToShow = isGroup
                       ? section.fields
@@ -505,8 +544,9 @@ class _DynamicRecordFields extends StatelessWidget {
                       .toList();
                   if (rows.isEmpty) return const <Widget>[];
 
-                  // ✅ Build GPS info if available
-                  final gpsInfo = _buildGPSInfo(commodity);
+                  // ✅ Build GPS info ONLY after Commodity Information section (first section)
+                  final gpsInfo =
+                      sectionIndex == 0 ? _buildGPSInfo(commodity) : [];
 
                   return [
                     const SizedBox(height: 10),
@@ -537,16 +577,15 @@ class _DynamicRecordFields extends StatelessWidget {
             .map((field) => _ResolvedField(
                 label: field.label, value: _resolveFieldValue(field.key)))
             .toList();
-        
+
         // 🔍 DEBUG: Log all field values to see what's being filtered
         print('📋 Section "${section.title}":');
         for (final field in resolved) {
-          print('   ${field.label}: "${field.value}" (empty: ${field.value.isEmpty})');
+          print(
+              '   ${field.label}: "${field.value}" (empty: ${field.value.isEmpty})');
         }
-        
-        final rows = resolved
-            .where((field) => field.value.isNotEmpty)
-            .toList();
+
+        final rows = resolved.where((field) => field.value.isNotEmpty).toList();
 
         if (rows.isEmpty) {
           return const SizedBox.shrink();

@@ -90,6 +90,15 @@ class MonitoringRecordService {
 
       print('   ✅ projectBackground saved');
 
+      // ✅ Save trainings at group level for COLLECTIVE
+      if (implementationType.toLowerCase() == 'collective') {
+        final trainingsData = {
+          'trainings': data['trainings'] ?? [],
+        };
+        await groupDocRef.set(trainingsData, SetOptions(merge: true));
+        print('   ✅ trainings saved at group level');
+      }
+
       // ✅ LEVEL 2 & 3: Extract and save members with their commodities
       Map<String, dynamic> membersByFarmerId = {};
       List<Map<String, dynamic>> completedCommodities = [];
@@ -173,8 +182,19 @@ class MonitoringRecordService {
 
       // ✅ COLLECTIVE TYPE: Save commodities directly to group (no members subcollection)
       if (implementationType.toLowerCase() == 'collective') {
+        print(
+            '🔍 COLLECTIVE SYNC: Processing ${completedCommodities.length} commodities');
         for (int i = 0; i < completedCommodities.length; i++) {
           final commodity = completedCommodities[i];
+
+          // 🔍 DEBUG: Log damage fields from local data
+          print('   📦 Commodity $i:');
+          print('      - hasPest: ${commodity['hasPest']}');
+          print('      - pestOccurrence: ${commodity['pestOccurrence']}');
+          print('      - pestDamageArea: ${commodity['pestDamageArea']}');
+          print('      - pestDamageHa: ${commodity['pestDamageHa']}');
+          print('      - pestTreatment: ${commodity['pestTreatment']}');
+
           final commodityData = <String, dynamic>{
             'recordedAt': FieldValue.serverTimestamp(),
           };
@@ -299,6 +319,69 @@ class MonitoringRecordService {
                 'processingRemarks': commodity['processingRemarks'] ??
                     data['processingRemarks'] ??
                     [],
+
+                // ✅ PEST DAMAGE FIELDS (Step 06) - NOW INCLUDED FOR COLLECTIVE SYNC
+                'hasPest': commodity['hasPest'] ?? data['hasPest'] ?? false,
+                'pestOccurrence':
+                    commodity['pestOccurrence'] ?? data['pestOccurrence'] ?? '',
+                'pestDate': commodity['pestDate'] ?? data['pestDate'] ?? '',
+                'pestDamageArea':
+                    commodity['pestDamageArea'] ?? data['pestDamageArea'] ?? '',
+                'pestDamageHa':
+                    commodity['pestDamageHa'] ?? data['pestDamageHa'] ?? '',
+                'pestTreatment':
+                    commodity['pestTreatment'] ?? data['pestTreatment'] ?? '',
+                'pestAttached':
+                    commodity['pestAttached'] ?? data['pestAttached'] ?? '',
+
+                // ✅ DISEASE DAMAGE FIELDS (Step 06)
+                'hasDisease':
+                    commodity['hasDisease'] ?? data['hasDisease'] ?? false,
+                'diseaseOccurrence': commodity['diseaseOccurrence'] ??
+                    data['diseaseOccurrence'] ??
+                    '',
+                'diseaseDate':
+                    commodity['diseaseDate'] ?? data['diseaseDate'] ?? '',
+                'diseaseDamageArea': commodity['diseaseDamageArea'] ??
+                    data['diseaseDamageArea'] ??
+                    '',
+                'diseaseDamageHa': commodity['diseaseDamageHa'] ??
+                    data['diseaseDamageHa'] ??
+                    '',
+                'diseaseTreatment': commodity['diseaseTreatment'] ??
+                    data['diseaseTreatment'] ??
+                    '',
+                'diseaseAttached': commodity['diseaseAttached'] ??
+                    data['diseaseAttached'] ??
+                    '',
+
+                // ✅ ENVIRONMENTAL HAZARD FIELDS (Step 06)
+                'hasEnvHazard':
+                    commodity['hasEnvHazard'] ?? data['hasEnvHazard'] ?? false,
+                'envHazards':
+                    commodity['envHazards'] ?? data['envHazards'] ?? [],
+                'envDate': commodity['envDate'] ?? data['envDate'] ?? '',
+                'envDamageArea':
+                    commodity['envDamageArea'] ?? data['envDamageArea'] ?? '',
+                'envDamageHa':
+                    commodity['envDamageHa'] ?? data['envDamageHa'] ?? '',
+                'envTreatment':
+                    commodity['envTreatment'] ?? data['envTreatment'] ?? '',
+                'envAttached':
+                    commodity['envAttached'] ?? data['envAttached'] ?? '',
+
+                // ✅ HUMAN DAMAGE FIELDS (Step 06)
+                'hasHumanDamage': commodity['hasHumanDamage'] ??
+                    data['hasHumanDamage'] ??
+                    false,
+                'humanDamage':
+                    commodity['humanDamage'] ?? data['humanDamage'] ?? '',
+                'humanMortality':
+                    commodity['humanMortality'] ?? data['humanMortality'] ?? '',
+                'humanTreatment':
+                    commodity['humanTreatment'] ?? data['humanTreatment'] ?? '',
+                'humanAttached':
+                    commodity['humanAttached'] ?? data['humanAttached'] ?? '',
               });
               break;
             case 'livestock':
@@ -628,28 +711,57 @@ class MonitoringRecordService {
             // LEVEL 3: Save each farmer's COMMODITIES in commodities subcollection
             // Filter commodities that belong to this farmer
             // Match by either saadIdNo (if not empty) OR farmerName (if saadIdNo is empty)
+            print(
+                '   🔍 Filtering commodities for farmer: $farmerName (saadId: $farmerSaadId)');
+            print(
+                '      Total completedCommodities: ${completedCommodities.length}');
+
             final farmerCommodities = completedCommodities.where((c) {
               final commoditySaadId = (c['saadIdNo'] as String? ?? '').trim();
               final commodityFarmerName =
                   (c['farmerName'] as String? ?? '').trim();
 
+              print(
+                  '      - Checking commodity: farmerName="$commodityFarmerName" saadId="$commoditySaadId"');
+
               // Match if saadIdNo matches, OR if both are using farmerName as identifier
               if (farmerSaadId.isNotEmpty && commoditySaadId.isNotEmpty) {
-                return commoditySaadId == farmerSaadId;
+                final matches = commoditySaadId == farmerSaadId;
+                print('        → Match by saadId: $matches');
+                return matches;
               } else if (farmerSaadId.isEmpty &&
                   commodityFarmerName.isNotEmpty) {
                 // Both using farmerName as identifier
-                return commodityFarmerName == farmerName;
+                final matches = commodityFarmerName == farmerName;
+                print('        → Match by farmerName: $matches');
+                return matches;
               }
+              print('        → No match (both identifiers empty)');
               return false;
             }).toList();
 
-            // ✅ GLOBAL NUMBERING: use the already-computed global counter
-            // across all farmers in this FCA group, not just for the current farmer.
-            int currentNumber = globalNextNumber;
+            print(
+                '   ✅ Matched ${farmerCommodities.length} commodities for $farmerName');
+
+            // ✅ GLOBAL NUMBERING: Get starting number for this production type
+            final startingId = CommodityIdService.generateCommodityId(
+              productionType,
+              completedCommodities, // Pass ALL commodities for global count
+            );
+            int startingNumber = CommodityIdService.getNumberFromId(startingId);
 
             for (int i = 0; i < farmerCommodities.length; i++) {
               final commodity = farmerCommodities[i];
+
+              // 🔍 DEBUG: Log damage fields before sync
+              print('   📦 Commodity $i fields:');
+              print('      - hasPest: ${commodity['hasPest']}');
+              print('      - pestOccurrence: ${commodity['pestOccurrence']}');
+              print('      - pestDamageArea: ${commodity['pestDamageArea']}');
+              print('      - pestDamageHa: ${commodity['pestDamageHa']}');
+              print('      - pestTreatment: ${commodity['pestTreatment']}');
+              print('      - pestAttached: ${commodity['pestAttached']}');
+
               final commodityData = <String, dynamic>{
                 'saadIdNo': saadId,
                 'farmerName': farmerName,
@@ -786,7 +898,91 @@ class MonitoringRecordService {
                     'processingRemarks': commodity['processingRemarks'] ??
                         data['processingRemarks'] ??
                         [],
+
+                    // ✅ PEST DAMAGE FIELDS (Step 06) - NOW INCLUDED FOR SYNC
+                    'hasPest': commodity['hasPest'] ?? data['hasPest'] ?? false,
+                    'pestOccurrence': commodity['pestOccurrence'] ??
+                        data['pestOccurrence'] ??
+                        '',
+                    'pestDate': commodity['pestDate'] ?? data['pestDate'] ?? '',
+                    'pestDamageArea': commodity['pestDamageArea'] ??
+                        data['pestDamageArea'] ??
+                        '',
+                    'pestDamageHa':
+                        commodity['pestDamageHa'] ?? data['pestDamageHa'] ?? '',
+                    'pestTreatment': commodity['pestTreatment'] ??
+                        data['pestTreatment'] ??
+                        '',
+                    'pestAttached':
+                        commodity['pestAttached'] ?? data['pestAttached'] ?? '',
+
+                    // ✅ DISEASE DAMAGE FIELDS (Step 06)
+                    'hasDisease':
+                        commodity['hasDisease'] ?? data['hasDisease'] ?? false,
+                    'diseaseOccurrence': commodity['diseaseOccurrence'] ??
+                        data['diseaseOccurrence'] ??
+                        '',
+                    'diseaseDate':
+                        commodity['diseaseDate'] ?? data['diseaseDate'] ?? '',
+                    'diseaseDamageArea': commodity['diseaseDamageArea'] ??
+                        data['diseaseDamageArea'] ??
+                        '',
+                    'diseaseDamageHa': commodity['diseaseDamageHa'] ??
+                        data['diseaseDamageHa'] ??
+                        '',
+                    'diseaseTreatment': commodity['diseaseTreatment'] ??
+                        data['diseaseTreatment'] ??
+                        '',
+                    'diseaseAttached': commodity['diseaseAttached'] ??
+                        data['diseaseAttached'] ??
+                        '',
+
+                    // ✅ ENVIRONMENTAL HAZARD FIELDS (Step 06)
+                    'hasEnvHazard': commodity['hasEnvHazard'] ??
+                        data['hasEnvHazard'] ??
+                        false,
+                    'envHazards':
+                        commodity['envHazards'] ?? data['envHazards'] ?? [],
+                    'envDate': commodity['envDate'] ?? data['envDate'] ?? '',
+                    'envDamageArea': commodity['envDamageArea'] ??
+                        data['envDamageArea'] ??
+                        '',
+                    'envDamageHa':
+                        commodity['envDamageHa'] ?? data['envDamageHa'] ?? '',
+                    'envTreatment':
+                        commodity['envTreatment'] ?? data['envTreatment'] ?? '',
+                    'envAttached':
+                        commodity['envAttached'] ?? data['envAttached'] ?? '',
+
+                    // ✅ HUMAN DAMAGE FIELDS (Step 06)
+                    'hasHumanDamage': commodity['hasHumanDamage'] ??
+                        data['hasHumanDamage'] ??
+                        false,
+                    'humanDamage':
+                        commodity['humanDamage'] ?? data['humanDamage'] ?? '',
+                    'humanMortality': commodity['humanMortality'] ??
+                        data['humanMortality'] ??
+                        '',
+                    'humanTreatment': commodity['humanTreatment'] ??
+                        data['humanTreatment'] ??
+                        '',
+                    'humanAttached': commodity['humanAttached'] ??
+                        data['humanAttached'] ??
+                        '',
                   });
+
+                  // 🔍 DEBUG: Log what's being sent to Firebase
+                  print('      ✅ Syncing crop commodity to Firebase:');
+                  print('         - hasPest: ${commodityData['hasPest']}');
+                  print(
+                      '         - pestOccurrence: ${commodityData['pestOccurrence']}');
+                  print(
+                      '         - pestDamageArea: ${commodityData['pestDamageArea']}');
+                  print(
+                      '         - pestDamageHa: ${commodityData['pestDamageHa']}');
+                  print(
+                      '         - pestTreatment: ${commodityData['pestTreatment']}');
+
                   break;
                 case 'livestock':
                   commodityData.addAll({
@@ -1082,6 +1278,7 @@ class MonitoringRecordService {
               }
 
               // ✅ GLOBAL COMMODITY ID: Sequential numbering across all farmers
+              final currentNumber = startingNumber + i;
               final commodityId =
                   '${typePrefix}_${currentNumber.toString().padLeft(3, '0')}';
 
@@ -1096,8 +1293,6 @@ class MonitoringRecordService {
                   .doc(commodityId)
                   .set(commodityData);
               print('   ✅ Commodity $commodityId saved');
-
-              currentNumber++;
             }
             print('   ✅ All commodities saved for member: $farmerName');
           }
@@ -1164,24 +1359,48 @@ class MonitoringRecordService {
       // ✅ LEVEL 2: Fetch all members with their commodities
       try {
         final membersSnapshot = await doc.reference.collection('members').get();
+        print(
+            '🔍 fetchPendingRecords: Found ${membersSnapshot.docs.length} members');
         if (membersSnapshot.docs.isNotEmpty) {
           // Build membersByFarmerId map
           final membersByFarmerId = <String, dynamic>{};
           final members = <Map<String, dynamic>>[];
 
+          int memberIndex = 0;
           for (final memberDoc in membersSnapshot.docs) {
+            memberIndex++;
             final memberData = memberDoc.data();
             final saadId = memberDoc.id;
+            print(
+                '🔍 fetchPendingRecords - Member #$memberIndex: saadId=$saadId');
 
             if (saadId.isNotEmpty) {
               // ✅ LEVEL 3: Fetch commodities for this member
+              print('   🔍 Fetching commodities for saadId=$saadId...');
               final commoditiesSnapshot =
                   await memberDoc.reference.collection('commodities').get();
 
+              print(
+                  '   ✅ Got ${commoditiesSnapshot.docs.length} commodities for saadId=$saadId');
               final commodities = <Map<String, dynamic>>[];
               for (final commodityDoc in commoditiesSnapshot.docs) {
-                commodities
-                    .add({'id': commodityDoc.id, ...commodityDoc.data()});
+                final commodityData = {
+                  'id': commodityDoc.id,
+                  ...commodityDoc.data()
+                };
+
+                // 🔍 DEBUG: Log damage fields from Firebase
+                print('🔍 fetchPendingRecords - Member commodity:');
+                print('   - commodityId: ${commodityData['commodityId']}');
+                print('   - hasPest: ${commodityData['hasPest']}');
+                print(
+                    '   - pestOccurrence: ${commodityData['pestOccurrence']}');
+                print(
+                    '   - pestDamageArea: ${commodityData['pestDamageArea']}');
+                print('   - pestDamageHa: ${commodityData['pestDamageHa']}');
+                print('   - pestTreatment: ${commodityData['pestTreatment']}');
+
+                commodities.add(commodityData);
               }
 
               // Normalize member name for display and compatibility with older records
@@ -1191,6 +1410,8 @@ class MonitoringRecordService {
 
               // Add commodities to member data
               memberData['commodities'] = commodities;
+              print(
+                  '   ✅ Added ${commodities.length} commodities to memberData[saadId=$saadId]');
 
               membersByFarmerId[saadId] = memberData;
               members.add({'id': memberDoc.id, ...memberData});
@@ -1199,6 +1420,8 @@ class MonitoringRecordService {
 
           if (membersByFarmerId.isNotEmpty) {
             // Only include the hierarchical map for group records.
+            print(
+                '✅ fetchPendingRecords: Adding membersByFarmerId with ${membersByFarmerId.length} members');
             data['membersByFarmerId'] = membersByFarmerId;
           }
         } else {
@@ -1208,8 +1431,21 @@ class MonitoringRecordService {
           if (rootCommoditiesSnapshot.docs.isNotEmpty) {
             final rootCommodities = <Map<String, dynamic>>[];
             for (final commodityDoc in rootCommoditiesSnapshot.docs) {
-              rootCommodities
-                  .add({'id': commodityDoc.id, ...commodityDoc.data()});
+              final commodityData = {
+                'id': commodityDoc.id,
+                ...commodityDoc.data()
+              };
+
+              // 🔍 DEBUG: Log damage fields from Firebase
+              print('🔍 fetchPendingRecords - Root commodity:');
+              print('   - commodityId: ${commodityData['commodityId']}');
+              print('   - hasPest: ${commodityData['hasPest']}');
+              print('   - pestOccurrence: ${commodityData['pestOccurrence']}');
+              print('   - pestDamageArea: ${commodityData['pestDamageArea']}');
+              print('   - pestDamageHa: ${commodityData['pestDamageHa']}');
+              print('   - pestTreatment: ${commodityData['pestTreatment']}');
+
+              rootCommodities.add(commodityData);
             }
             data['commodities'] = rootCommodities;
           }

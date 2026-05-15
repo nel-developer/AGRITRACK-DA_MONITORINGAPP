@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/pending_draft_service.dart';
+import '../../services/monitoring_record_service.dart';
 import '../../theme/da_colors.dart';
 import '../../widgets/record_card.dart';
 import '../../widgets/crop_dropdown.dart';
@@ -205,10 +207,12 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
   late final Map<String, TextEditingController> _controllers;
   late final Map<String, TextEditingController> _itemControllers;
   late final List<Map<String, dynamic>> _originalCommodityItems;
+  late final List<Map<String, dynamic>> _originalTrainings;
   late final bool _isCollective;
   late final String _commodityListKey;
   late final List<String> _commodityFieldKeys;
   late int _selectedCommodityIndex;
+  late int _selectedTrainingIndex;
   bool _isSaving = false;
 
   @override
@@ -231,7 +235,27 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
             .toList() ??
         [];
 
+    _originalTrainings = (_originalData['trainings'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList() ??
+        [];
+
+    // Debug logging
+    print('🔍 [Edit Modal] Type: $type, Commodity Key: $_commodityListKey');
+    print(
+        '🔍 [Edit Modal] isMemberEditOnly: ${widget.isMemberEditOnly}, isGroup: ${widget.isGroup}');
+    print('🔍 [Edit Modal] Data keys: ${_originalData.keys.toList()}');
+    print(
+        '🔍 [Edit Modal] Commodities found: ${_originalCommodityItems.length}');
+    print('🔍 [Edit Modal] Trainings found: ${_originalTrainings.length}');
+    if (_originalCommodityItems.isNotEmpty) {
+      print(
+          '🔍 [Edit Modal] First commodity: ${_originalCommodityItems.first}');
+    }
+
     _selectedCommodityIndex = 0;
+    _selectedTrainingIndex = 0;
     _itemControllers = {};
     final shouldCreateItemControllers = _originalCommodityItems.isNotEmpty &&
         (_isCollective || !widget.isGroup);
@@ -866,7 +890,10 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
       }
     }
 
-    final shouldSaveItemControllers = _originalCommodityItems.isNotEmpty &&
+    // ✅ For local/draft records only, build the commodity list in memory
+    // For Firebase pending records, commodities are saved to subcollection only
+    final shouldSaveItemControllers = widget.record.isLocal &&
+        _originalCommodityItems.isNotEmpty &&
         (_isCollective || !widget.isGroup);
     if (shouldSaveItemControllers) {
       final type = widget.record.productionType.toLowerCase();
@@ -893,6 +920,173 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
           localId: widget.record.id!,
           data: updates,
         );
+      }
+
+      // ✅ If this is a PENDING record on Firebase, update it there too
+      if (!widget.record.isLocal && widget.record.status == 'pending') {
+        print('🔥 Updating PENDING record on Firebase: ${widget.record.name}');
+        try {
+          // Get the document path from the record
+          final docPath = widget.record.documentPath;
+          if (docPath != null) {
+            print('   📝 Updating document at path: $docPath');
+            final implementationType =
+                (widget.record.data?['implementationType'] as String? ?? '')
+                    .toLowerCase();
+            final firestore = FirebaseFirestore.instance;
+
+            // ✅ COLLECTIVE: Update group document AND commodities subcollection
+            if (implementationType == 'collective') {
+              final groupDocRef = firestore.doc(docPath);
+
+              // Update ONLY group-level fields (trainings, etc)
+              final groupUpdates = <String, dynamic>{
+                'trainings': updates['trainings'] ?? [],
+                'updatedAt': FieldValue.serverTimestamp(),
+              };
+
+              const groupLevelFields = {
+                'reportingPeriod',
+                'fcaName',
+                'region',
+                'province',
+                'municipality',
+                'barangay',
+                'projectTitle',
+                'primaryIntervention',
+                'primaryInterventionOther',
+                'supportInterventions',
+              };
+              for (final field in groupLevelFields) {
+                if (updates.containsKey(field)) {
+                  groupUpdates[field] = updates[field];
+                }
+              }
+
+              await groupDocRef.update(groupUpdates);
+              print('   ✅ Updated group-level fields');
+
+              // Update each commodity in the commodities subcollection
+              if (_originalCommodityItems.isNotEmpty) {
+                final type = widget.record.productionType.toLowerCase();
+                for (var itemIndex = 0;
+                    itemIndex < _originalCommodityItems.length;
+                    itemIndex++) {
+                  final commodityData = _originalCommodityItems[itemIndex];
+                  final commodityId = (commodityData['id'] as String?) ??
+                      (commodityData['commodityId'] as String?) ??
+                      '';
+
+                  if (commodityId.isNotEmpty) {
+                    final updatedCommodity = <String, dynamic>{};
+                    for (final field in _commodityFieldKeys) {
+                      final controller =
+                          _itemControllers['${type}_${itemIndex}_$field'];
+                      if (controller != null) {
+                        updatedCommodity[field] = controller.text.trim();
+                      } else {
+                        if (commodityData.containsKey(field)) {
+                          updatedCommodity[field] = commodityData[field];
+                        }
+                      }
+                    }
+                    updatedCommodity['updatedAt'] =
+                        FieldValue.serverTimestamp();
+
+                    await groupDocRef
+                        .collection('commodities')
+                        .doc(commodityId)
+                        .update(updatedCommodity);
+                    print(
+                        '   ✅ Updated commodity in subcollection: $commodityId');
+                  }
+                }
+              }
+
+              print(
+                  '   ✅ Updated COLLECTIVE pending record (group level + subcollection commodities)');
+            }
+            // ✅ INDIVIDUAL/HYBRID: Update farmer document in members subcollection
+            else if (implementationType == 'individual' ||
+                implementationType == 'hybrid') {
+              // Extract group doc path and farmer SAAD ID from the record
+              final groupDocId =
+                  widget.record.documentPath?.split('/')[1] ?? '';
+              final saadId = widget.record.data?['saadIdNo']?.toString() ?? '';
+
+              if (groupDocId.isNotEmpty && saadId.isNotEmpty) {
+                final farmerDocRef = firestore
+                    .collection('pending_monitoring')
+                    .doc(groupDocId)
+                    .collection('members')
+                    .doc(saadId);
+
+                // Update farmer-level fields (trainings, commodities)
+                final farmerUpdates = <String, dynamic>{
+                  'trainings': updates['trainings'] ?? [],
+                  'updatedAt': FieldValue.serverTimestamp(),
+                };
+
+                // Add any farmer-specific fields that were updated
+                if (updates.containsKey('farmerName')) {
+                  farmerUpdates['farmerName'] = updates['farmerName'];
+                }
+
+                await farmerDocRef.update(farmerUpdates);
+                print('   ✅ Updated farmer-level fields');
+
+                // Update each commodity in the farmer's commodities subcollection
+                if (_originalCommodityItems.isNotEmpty) {
+                  final type = widget.record.productionType.toLowerCase();
+                  for (var itemIndex = 0;
+                      itemIndex < _originalCommodityItems.length;
+                      itemIndex++) {
+                    final commodityData = _originalCommodityItems[itemIndex];
+                    final commodityId = (commodityData['id'] as String?) ??
+                        (commodityData['commodityId'] as String?) ??
+                        '';
+
+                    if (commodityId.isNotEmpty) {
+                      final updatedCommodity = <String, dynamic>{};
+                      for (final field in _commodityFieldKeys) {
+                        final controller =
+                            _itemControllers['${type}_${itemIndex}_$field'];
+                        if (controller != null) {
+                          updatedCommodity[field] = controller.text.trim();
+                        } else {
+                          if (commodityData.containsKey(field)) {
+                            updatedCommodity[field] = commodityData[field];
+                          }
+                        }
+                      }
+                      updatedCommodity['updatedAt'] =
+                          FieldValue.serverTimestamp();
+
+                      await farmerDocRef
+                          .collection('commodities')
+                          .doc(commodityId)
+                          .update(updatedCommodity);
+                      print(
+                          '   ✅ Updated farmer commodity in subcollection: $commodityId');
+                    }
+                  }
+                }
+
+                print(
+                    '   ✅ Updated ${implementationType.toUpperCase()} pending record (farmer level + subcollection commodities)');
+              } else {
+                print(
+                    '   ⚠️ Could not extract group/farmer IDs for ${implementationType.toUpperCase()} record');
+              }
+            }
+          } else {
+            print('   ⚠️ No documentPath found for pending record');
+          }
+        } catch (firebaseError) {
+          print(
+              '   ⚠️ Error updating pending record on Firebase: $firebaseError');
+          // Don't throw - allow local save to succeed even if Firebase update fails
+        }
       }
 
       if (!mounted) return;
@@ -941,16 +1135,29 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
                 .where((key) => !_commodityFieldKeys.contains(key))
                 .toList();
 
-    // Show commodity section for: (collective OR farmer editing own record) AND has items
+    // Show commodity section for: farmer editing their record OR collective group editing
     final showCommoditySection = _originalCommodityItems.isNotEmpty &&
-        (_isCollective || (widget.isMemberEditOnly && !widget.isGroup));
+        (!widget.isGroup || _isCollective);
+
+    // For farmers editing their own records, exclude commodity fields from regular sections
+    // since they'll be edited via the dropdown in _buildCommodityEditorSection
+    final keysForSections = (widget.isMemberEditOnly && !widget.isGroup)
+        ? keys.where((key) => !_commodityFieldKeys.contains(key)).toList()
+        : keys;
+
+    // Exclude trainingsSummary from sections if we're showing the trainings dropdown
+    final keysForSectionsFiltered = _originalTrainings.isNotEmpty
+        ? keysForSections.where((key) => key != 'trainingsSummary').toList()
+        : keysForSections;
 
     if (type == 'crop') {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (keys.isNotEmpty) _buildCropSections(keys),
+          if (keysForSectionsFiltered.isNotEmpty)
+            _buildCropSections(keysForSectionsFiltered),
           if (showCommoditySection) _buildCommodityEditorSection(type),
+          if (_originalTrainings.isNotEmpty) _buildTrainingsEditorSection(),
         ],
       );
     }
@@ -958,8 +1165,9 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (keys.isNotEmpty) const _SectionHeader(title: 'Edit Record'),
-        ...keys.map((key) => Padding(
+        if (keysForSectionsFiltered.isNotEmpty)
+          const _SectionHeader(title: 'Edit Record'),
+        ...keysForSectionsFiltered.map((key) => Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -977,6 +1185,7 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
               ),
             )),
         if (showCommoditySection) _buildCommodityEditorSection(type),
+        if (_originalTrainings.isNotEmpty) _buildTrainingsEditorSection(),
         const SizedBox(height: 24),
       ],
     );
@@ -1021,9 +1230,10 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
                 items: _originalCommodityItems.asMap().entries.map((entry) {
                   final idx = entry.key;
                   final item = entry.value;
+                  // ✅ Show "Commodity 1", "Commodity 2", etc. format
                   final displayText = type == 'crop'
-                      ? '${item['typeOfCrop']?.toString().trim() ?? 'Commodity'} · ${item['variety']?.toString().trim() ?? ''}'
-                      : '${item['breed']?.toString().trim() ?? 'Batch'} ${idx + 1}';
+                      ? '$itemLabel ${idx + 1}'
+                      : '$itemLabel ${idx + 1}';
                   return DropdownMenuItem(
                     value: idx,
                     child: Text(
@@ -1051,6 +1261,123 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
               : Column(
                   children:
                       _buildGenericItemFields(type, _selectedCommodityIndex)),
+      ],
+    );
+  }
+
+  Widget _buildTrainingsEditorSection() {
+    if (_originalTrainings.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        const _SectionHeader(title: 'Trainings Attended'),
+        // Training selector dropdown
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _lbl('Select Training to Edit'),
+              DropdownButtonFormField<int>(
+                initialValue: _selectedTrainingIndex,
+                items: _originalTrainings.asMap().entries.map((entry) {
+                  final idx = entry.key;
+                  final training = entry.value;
+                  final trainingName = (training['name']?.toString().trim() ??
+                      'Training ${idx + 1}');
+                  return DropdownMenuItem(
+                    value: idx,
+                    child: Text(
+                      'Training ${idx + 1}: $trainingName',
+                      style: GoogleFonts.poppins(fontSize: 13),
+                    ),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() => _selectedTrainingIndex = val);
+                  }
+                },
+                decoration: _fieldDeco('Choose Training'),
+              ),
+            ],
+          ),
+        ),
+        // Show selected training fields
+        if (_selectedTrainingIndex < _originalTrainings.length) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _lbl('Training Name'),
+                TextFormField(
+                  initialValue: _originalTrainings[_selectedTrainingIndex]
+                              ['name']
+                          ?.toString() ??
+                      '',
+                  enabled: !_isSaving,
+                  style: GoogleFonts.poppins(
+                      fontSize: 14, color: DAColors.textDark),
+                  decoration: _fieldDeco('Enter Training Name'),
+                  onChanged: (val) {
+                    _originalTrainings[_selectedTrainingIndex]['name'] = val;
+                  },
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _lbl('Training Date'),
+                TextFormField(
+                  initialValue: _originalTrainings[_selectedTrainingIndex]
+                              ['date']
+                          ?.toString() ??
+                      '',
+                  enabled: !_isSaving,
+                  style: GoogleFonts.poppins(
+                      fontSize: 14, color: DAColors.textDark),
+                  decoration: _fieldDeco('Enter Training Date'),
+                  onChanged: (val) {
+                    _originalTrainings[_selectedTrainingIndex]['date'] = val;
+                  },
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _lbl('Number of Attendees'),
+                TextFormField(
+                  initialValue: _originalTrainings[_selectedTrainingIndex]
+                              ['attendees']
+                          ?.toString() ??
+                      '',
+                  enabled: !_isSaving,
+                  style: GoogleFonts.poppins(
+                      fontSize: 14, color: DAColors.textDark),
+                  decoration: _fieldDeco('Enter Number of Attendees'),
+                  onChanged: (val) {
+                    _originalTrainings[_selectedTrainingIndex]['attendees'] =
+                        val;
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
       ],
     );
   }

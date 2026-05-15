@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -657,6 +656,22 @@ class _CropStep7State extends State<CropStep7Trainings> {
         // Build farmer data (Steps 02-07 only)
         final farmerData = _buildFarmerData(jsonData, farmerName, saadIdNo);
 
+        // ✅ FIX: Add photoGPS to first commodity if GPS data exists
+        if (_photoLatitude != null && _photoLongitude != null) {
+          final commodities = (farmerData['completedCommodities'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              [];
+          if (commodities.isNotEmpty) {
+            commodities[0]['photoGPS'] = {
+              'latitude': _photoLatitude!,
+              'longitude': _photoLongitude!,
+              'accuracy': _photoAccuracy ?? 0.0,
+            };
+            print(
+                '✅ [FIX] Added photoGPS to FIRST commodity: ${commodities[0]['photoGPS']}');
+          }
+        }
+
         final farmerJsonFile = File('${farmerDir.path}/data.json');
 
         // ✅ CRITICAL: If data.json already exists, load it and MERGE commodities
@@ -695,7 +710,7 @@ class _CropStep7State extends State<CropStep7Trainings> {
                 [];
             final mergedTrainings = [
               ...existingTrainings,
-              ...w.trainings.map((item) => item.toJson()).toList()
+              ...w.trainings.map((item) => item.toJson())
             ];
 
             // ✅ CRITICAL: Preserve ALL existing fields + only update commodities & trainings

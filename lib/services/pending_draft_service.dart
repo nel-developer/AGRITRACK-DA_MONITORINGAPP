@@ -754,6 +754,8 @@ class PendingDraftService {
               // ✅ CRITICAL: Load farmer-specific commodities from subfolders
               // This ensures commodities have the correct saadIdNo
               final allFarmerCommodities = <Map<String, dynamic>>[];
+              final foundFarmerIds = <String>{};
+
               for (final saadId in membersByFarmerId.keys) {
                 final member =
                     membersByFarmerId[saadId] as Map<String, dynamic>;
@@ -779,6 +781,7 @@ class PendingDraftService {
                       '   getFarmerData returned: ${farmerData != null ? "DATA" : "NULL"}');
 
                   if (farmerData != null) {
+                    foundFarmerIds.add(saadId);
                     final farmerCommodities =
                         farmerData['completedCommodities'] as List? ?? [];
                     final farmerTrainings =
@@ -810,6 +813,57 @@ class PendingDraftService {
                 } catch (e) {
                   print('   ❌ ERROR loading farmer data: $e');
                   print('      StackTrace: $e');
+                }
+              }
+
+              // ✅ FALLBACK: If some farmers weren't found, scan directory for all subfolders
+              if (foundFarmerIds.length < membersByFarmerId.length) {
+                print(
+                    '   ⚠️  Some farmers not found. Scanning directory for all farmer folders...');
+                try {
+                  final allFarmers = await LocalFarmerStorageService.instance
+                      .getAllFarmersInGroup(
+                    productionType,
+                    groupName,
+                  );
+
+                  print(
+                      '   🔍 Found ${allFarmers.length} farmer folders in directory');
+
+                  for (final farmer in allFarmers) {
+                    final farmerSaadId = farmer['saadIdNo'] as String? ?? '';
+                    final farmerName = farmer['farmerName'] as String? ?? '';
+
+                    if (farmerSaadId.isNotEmpty &&
+                        !foundFarmerIds.contains(farmerSaadId)) {
+                      print(
+                          '   ✅ Auto-discovered farmer: $farmerName ($farmerSaadId)');
+
+                      // Add to membersByFarmerId if not already there
+                      if (!membersByFarmerId.containsKey(farmerSaadId)) {
+                        membersByFarmerId[farmerSaadId] = {
+                          'farmerName': farmerName,
+                          'name': farmerName,
+                          'saadIdNo': farmerSaadId,
+                          'trainings': farmer['trainings'] ?? [],
+                        };
+                      }
+
+                      // Add their commodities
+                      final farmerCommodities =
+                          farmer['commodities'] as List? ?? [];
+                      for (final commodity in farmerCommodities) {
+                        if (commodity is Map<String, dynamic>) {
+                          commodity['saadIdNo'] = farmerSaadId;
+                          commodity['farmerName'] = farmerName;
+                          allFarmerCommodities.add(commodity);
+                        }
+                      }
+                      foundFarmerIds.add(farmerSaadId);
+                    }
+                  }
+                } catch (e) {
+                  print('   ❌ ERROR scanning directory: $e');
                 }
               }
 
