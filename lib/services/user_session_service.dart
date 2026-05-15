@@ -157,11 +157,12 @@ class UserSessionService {
     print('   - User UID: ${user.uid}');
     print('   - Raw role from Firestore: "$rawRole"');
     print('   - Firestore doc keys: ${data.keys.toList()}');
-    
+
     final role = _roleFromRaw(rawRole);
     print('   - Parsed role enum: $role');
     final resolvedRole = role == UserRole.unknown ? UserRole.profiler : role;
-    print('   - Resolved role: $resolvedRole (Unknown->Profiler fallback applied: ${role == UserRole.unknown})');
+    print(
+        '   - Resolved role: $resolvedRole (Unknown->Profiler fallback applied: ${role == UserRole.unknown})');
 
     final fallbackName = user.email?.split('@').first ?? 'User';
     final displayNameFromDoc = _displayNameFromData(data);

@@ -1572,7 +1572,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
     final session = await UserSessionService.instance.getCurrentSession();
     final isModerator = session?.isModerator ?? false;
     final isAdmin = session?.isAdmin ?? false;
-    
+
     // DEBUG: Log session and role info
     print('🔐 Session Debug:');
     print('   - Session: $session');
@@ -1581,8 +1581,10 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
     print('   - isModerator: $isModerator');
     print('   - isAdmin: $isAdmin');
     print('   - Record status: ${memberRecord.record.status}');
-    print('   - showApprove would be: ${memberRecord.record.status == 'pending' && (isModerator || isAdmin)}');
-    print('   - approveLocked would be: ${memberRecord.record.status == 'pending' && !(isModerator || isAdmin)}');
+    print(
+        '   - showApprove would be: ${memberRecord.record.status == 'pending' && (isModerator || isAdmin)}');
+    print(
+        '   - approveLocked would be: ${memberRecord.record.status == 'pending' && !(isModerator || isAdmin)}');
 
     if (!mounted) return;
 
@@ -1639,6 +1641,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
       future: _sessionFuture,
       builder: (context, sessionSnapshot) {
         final isModerator = sessionSnapshot.data?.isModerator ?? false;
+        final isAdmin = sessionSnapshot.data?.isAdmin ?? false;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF2F2F2),
@@ -1837,16 +1840,16 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                                           // For approved: Show edit button (moderators only)
                                           showEdit: (widget.record.status ==
                                                   'approved' &&
-                                              isModerator),
+                                              (isModerator || isAdmin)),
                                           showSync: widget.record.status ==
                                                   'unsync' ||
                                               widget.record.status == 'pending',
                                           showApprove: widget.record.status ==
                                                   'pending' &&
-                                              isModerator,
+                                              (isModerator || isAdmin),
                                           approveLocked: widget.record.status ==
                                                   'pending' &&
-                                              !isModerator,
+                                              !(isModerator || isAdmin),
                                           // ✅ Sync to Firebase on demand
                                           onSync:
                                               widget.record.status == 'unsync'
@@ -1854,15 +1857,19 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                                                   : null,
                                           onApprove: widget.record.status ==
                                                       'pending' &&
-                                                  isModerator
+                                                  (isModerator || isAdmin)
                                               ? () => _updateReviewStatus(
-                                                  widget.record, 'approved')
+                                                  widget.record, 'approved',
+                                                  isModerator: isModerator,
+                                                  isAdmin: isAdmin)
                                               : null,
                                           onDecline: widget.record.status ==
                                                       'pending' &&
-                                                  isModerator
+                                                  (isModerator || isAdmin)
                                               ? () => _updateReviewStatus(
-                                                  widget.record, 'declined')
+                                                  widget.record, 'declined',
+                                                  isModerator: isModerator,
+                                                  isAdmin: isAdmin)
                                               : null,
                                         ),
                                       ),
