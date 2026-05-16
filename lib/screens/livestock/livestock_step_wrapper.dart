@@ -255,7 +255,9 @@ class LivestockStepWrapper {
       'humanRemainingStocks': humanRemainingStocks,
       'humanTreatment': humanTreatment,
       'humanAttached': humanAttached,
-      'trainings': trainings.map((item) => item.toJson()).toList(),
+      'trainings': implementationType?.toLowerCase() == 'collective'
+          ? []
+          : trainings.map((item) => item.toJson()).toList(),
       'farmPhoto': farmPhoto,
     };
   }

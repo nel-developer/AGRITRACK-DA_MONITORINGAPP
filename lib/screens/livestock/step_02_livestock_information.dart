@@ -394,10 +394,19 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
                 w.implementationType == 'hybrid') &&
             w.farmerName.isEmpty);
 
-    // For individual/hybrid forms, keep the SAAD picker visible when a farmer has already been selected
+    // For individual/hybrid forms, show SAAD picker only when:
+    //   (a) adding a new farmer (isAddFarmer), or
+    //   (b) fresh start with no farmer selected yet, or
+    //   (c) NOT adding a new commodity (when adding commodity, farmer is locked)
     final bool showApprovedFarmerPicker =
         w.implementationType?.toLowerCase() != 'collective' &&
+            !w.isAddingNewCommodity &&
             (w.isAddFarmer || w.farmerName.isEmpty || w.saadIdNo.isNotEmpty);
+
+    // Show farmer info card (read-only) when adding new commodity to existing farmer
+    final bool showLockedFarmerInfo = w.isAddingNewCommodity &&
+        w.farmerName.isNotEmpty &&
+        w.implementationType?.toLowerCase() != 'collective';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -412,6 +421,62 @@ class _LivestockStep2State extends State<LivestockStep2LivestockInformation> {
             onSelected: _selectApprovedFarmer,
             onCleared: _clearApprovedFarmer,
           ),
+        ],
+        if (showLockedFarmerInfo) ...[
+          _buildLabel('Farmer Information (Locked)'),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F8F0),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFB8E0B8), width: 1.2),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Farmer Name',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF666666),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  w.farmerName,
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: DAColors.textDark,
+                  ),
+                ),
+                if (w.saadIdNo.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'SAAD ID',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF666666),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    w.saadIdNo,
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: DAColors.textDark,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
         if (showFarmerName) ...[
           if (w.approvedFarmerProfile.isNotEmpty) ...[

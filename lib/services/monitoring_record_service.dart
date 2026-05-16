@@ -106,6 +106,30 @@ class MonitoringRecordService {
       if (data['membersByFarmerId'] != null) {
         membersByFarmerId =
             Map<String, dynamic>.from(data['membersByFarmerId']);
+
+        // ✅ FIX: For individual/hybrid, extract batches from membersByFarmerId
+        // because completedBatches are stored inside each farmer's entry
+        for (final farmerId in membersByFarmerId.keys) {
+          final farmer = membersByFarmerId[farmerId] as Map<String, dynamic>?;
+          if (farmer != null && farmer['completedBatches'] != null) {
+            final batches = farmer['completedBatches'] as List? ?? [];
+            print(
+                '   🔍 Extracting ${batches.length} batches for farmer: $farmerId');
+            for (final batch in batches) {
+              if (batch is Map<String, dynamic>) {
+                // ✅ CRITICAL: Always set saadIdNo from the farmerId key to ensure
+                // proper filtering later. farmerId is the definitive identifier.
+                batch['saadIdNo'] = farmerId;
+                batch['farmerName'] = farmer['farmerName'] ?? '';
+                print(
+                    '      ✅ Added batch with saadIdNo=$farmerId, farmerName=${batch['farmerName']}');
+                completedCommodities.add(batch);
+              }
+            }
+          }
+        }
+        print(
+            '   🔄 Extracted ${completedCommodities.length} batches from membersByFarmerId');
       } else if (data['farmerName'] != null &&
           (data['farmerName'] as String).isNotEmpty) {
         // Individual record - treat as single farmer
@@ -118,13 +142,16 @@ class MonitoringRecordService {
         };
       }
 
-      // Collect all completed commodities/batches
-      if (data['completedCommodities'] != null) {
-        completedCommodities =
-            List<Map<String, dynamic>>.from(data['completedCommodities']);
-      } else if (data['completedBatches'] != null) {
-        completedCommodities =
-            List<Map<String, dynamic>>.from(data['completedBatches']);
+      // ✅ Collect all completed commodities/batches
+      // Only collect from root-level if we didn't already extract from membersByFarmerId
+      if (completedCommodities.isEmpty) {
+        if (data['completedCommodities'] != null) {
+          completedCommodities =
+              List<Map<String, dynamic>>.from(data['completedCommodities']);
+        } else if (data['completedBatches'] != null) {
+          completedCommodities =
+              List<Map<String, dynamic>>.from(data['completedBatches']);
+        }
       }
 
       // ✅ GLOBAL NUMBERING: Fetch ALL existing commodities from Firebase for this group
@@ -490,6 +517,11 @@ class MonitoringRecordService {
                 'processingRemarks': commodity['processingRemarks'] ??
                     data['processingRemarks'] ??
                     '',
+
+                // ✅ TRAININGS AND PHOTO (Step 07) - Stored at batch level for collective
+                'trainings': commodity['trainings'] ?? [],
+                'farmPhoto': commodity['farmPhoto'] ?? '',
+                'photoGPS': commodity['photoGPS'] ?? {},
               });
               break;
             case 'poultry':
@@ -677,8 +709,10 @@ class MonitoringRecordService {
         return groupDocId;
       }
 
-      // ✅ INDIVIDUAL/HYBRID: Save each farmer in members subcollection with their commodities
-      print('📋 INDIVIDUAL/HYBRID PATH:');
+      // ✅ INDIVIDUAL/HYBRID PATH: Both use same sync logic
+      // Both individual and hybrid support multiple farmers with members/{saadId}/commodities structure
+      print(
+          '📋 INDIVIDUAL/HYBRID PATH (applies to both individual and hybrid):');
       print('   membersByFarmerId keys: ${membersByFarmerId.keys.toList()}');
       print('   Total members to sync: ${membersByFarmerId.length}');
 

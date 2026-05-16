@@ -34,7 +34,7 @@ class UserSessionService {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  static const Duration _sessionCacheTtl = Duration(seconds: 20);
+  static const Duration _sessionCacheTtl = Duration(minutes: 5);
 
   UserSession? _cachedSession;
   DateTime? _cachedSessionAt;
@@ -42,8 +42,15 @@ class UserSessionService {
 
   late final Stream<UserSession?> _sessionStream =
       _auth.authStateChanges().asyncMap((user) async {
-    _cachedSession = null;
-    _cachedSessionAt = null;
+    // ✅ CRITICAL: Only clear cache if user is actually logging out (user == null)
+    // Don't clear on every auth state change - that causes false logouts on network hiccups
+    if (user == null) {
+      _cachedSession = null;
+      _cachedSessionAt = null;
+      return null;
+    }
+
+    // User exists - resolve their full session (role, approval, etc)
     return _resolveSession(user);
   }).asBroadcastStream();
 
@@ -120,50 +127,49 @@ class UserSessionService {
   }
 
   Future<UserSession?> _resolveSession(User? user) async {
+    if (user == null) return null;
+
     try {
       final session = await _buildApprovedSession(user);
       _cachedSession = session;
       _cachedSessionAt = DateTime.now();
       return session;
     } catch (error) {
-      // ✅ Only treat as offline if device has NO internet connection
-      // Firebase errors might happen even with internet (auth issues, rules, timeouts)
-      if (_isOfflineError(error)) {
-        final hasInternet =
-            await ConnectivityService.instance.hasInternetConnection();
+      // ✅ CRITICAL: On error, DON'T log the user out - keep them logged in!
+      // Only log out if this is a real auth/approval issue
+      // For any temporary/network errors, keep the cached session
 
-        if (!hasInternet) {
-          // TRUE offline - no internet at all
-          print('🔴 [Session] No internet connection - entering offline mode');
-          if (user != null) {
-            final offline = _buildOfflineSession(user);
-            _cachedSession = offline;
-            _cachedSessionAt = DateTime.now();
-            return offline;
-          }
-        } else {
-          // Has internet but Firebase failed - might be temporary
-          print(
-              '🟡 [Session] Firebase unavailable but internet exists - using cached/fallback session');
+      print('⚠️ [Session] Error resolving session: $error');
 
-          // Return cached session if available
-          if (_cachedSession != null) {
-            return _cachedSession;
-          }
-
-          // Or build offline session if we have user data
-          if (user != null) {
-            final fallback = _buildOfflineSession(user);
-            _cachedSession = fallback;
-            _cachedSessionAt = DateTime.now();
-            return fallback;
-          }
-        }
+      // Check for specific approval errors - these should cause logout
+      if (error is FirebaseAuthException &&
+          error.code == 'account-not-approved') {
+        print('❌ [Session] Account not approved - logging out');
+        _cachedSession = null;
+        _cachedSessionAt = null;
+        return null;
       }
 
-      _cachedSession = null;
-      _cachedSessionAt = null;
-      return null;
+      // For all other errors (network, timeout, Firestore, etc):
+      // Keep the cached session to prevent false logouts
+      if (_cachedSession != null) {
+        print(
+            '✅ [Session] Using cached session (error was temporary): $_cachedSession');
+        return _cachedSession;
+      }
+
+      // If no cache exists, try to build a fallback session
+      try {
+        final fallback = _buildOfflineSession(user);
+        _cachedSession = fallback;
+        _cachedSessionAt = DateTime.now();
+        print('✅ [Session] Built fallback session');
+        return fallback;
+      } catch (fallbackError) {
+        print('⚠️ [Session] Even fallback failed: $fallbackError');
+        // Return the cached session even if it's stale, don't log out
+        return _cachedSession;
+      }
     }
   }
 

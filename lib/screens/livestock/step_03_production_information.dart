@@ -39,20 +39,6 @@ class _LivestockStep3State extends State<LivestockStep3ProductionInformation> {
   String _healthOthers = '';
   String _wasteManagement = '';
 
-  // ── Purpose-conditional fields ───────────────────────────────
-  // Fattener
-  String _growOutPeriod = '';
-  // Dairy
-  String _lactationPeriod = '';
-  String _dryPeriod = '';
-  // Breeding
-  String _producedOffspring = '';
-  String _offspringMale = '';
-  String _offspringFemale = '';
-  String _offspringMFRatio = '';
-  String _mortalitiesAfterBirth = '';
-  String _remainingOffspring = '';
-
   bool get _isFattener => w.purposeMeat;
   bool get _isDairy => w.purposeDairy;
   bool get _isBreeding => w.purposeBreeding;
@@ -103,15 +89,6 @@ class _LivestockStep3State extends State<LivestockStep3ProductionInformation> {
     _healthActivities = w.healthActivities;
     _healthOthers = w.healthOthers;
     _wasteManagement = w.wasteManagement;
-    _growOutPeriod = w.growOutPeriod;
-    _lactationPeriod = w.lactationPeriod;
-    _dryPeriod = w.dryPeriod;
-    _producedOffspring = w.producedOffspring;
-    _offspringMale = w.offspringMale;
-    _offspringFemale = w.offspringFemale;
-    _offspringMFRatio = w.offspringMFRatio;
-    _mortalitiesAfterBirth = w.mortalitiesAfterBirth;
-    _remainingOffspring = w.remainingOffspring;
   }
 
   void _next() {
@@ -131,15 +108,6 @@ class _LivestockStep3State extends State<LivestockStep3ProductionInformation> {
     w.healthActivities = _healthActivities;
     w.healthOthers = _healthOthers;
     w.wasteManagement = _wasteManagement;
-    w.growOutPeriod = _growOutPeriod;
-    w.lactationPeriod = _lactationPeriod;
-    w.dryPeriod = _dryPeriod;
-    w.producedOffspring = _producedOffspring;
-    w.offspringMale = _offspringMale;
-    w.offspringFemale = _offspringFemale;
-    w.offspringMFRatio = _offspringMFRatio;
-    w.mortalitiesAfterBirth = _mortalitiesAfterBirth;
-    w.remainingOffspring = _remainingOffspring;
 
     Navigator.of(context).pushNamed(
       AppRoutes.livestockStep4,
@@ -325,99 +293,6 @@ class _LivestockStep3State extends State<LivestockStep3ProductionInformation> {
           initialValue: _wasteManagement,
           onChanged: (v) => _wasteManagement = v,
         ),
-        const SizedBox(height: 24),
-
-        // ── Fattener section ─────────────────────────────────
-        if (_isFattener) ...[
-          _purposeLabel('Fattener', DAColors.greenMid),
-          const SizedBox(height: 12),
-          CropField(
-            label: 'Identify actual grow-out period',
-            hint: 'Enter',
-            initialValue: _growOutPeriod,
-            onChanged: (v) => _growOutPeriod = v,
-          ),
-          const SizedBox(height: 24),
-        ],
-
-        // ── Dairy section ─────────────────────────────────────
-        if (_isDairy) ...[
-          _purposeLabel('Dairy', DAColors.greenMid),
-          const SizedBox(height: 12),
-          _buildLabel('Identify lactation period'),
-          const SizedBox(height: 8),
-          _dateField(
-            hint: 'Enter Month',
-            value: _lactationPeriod,
-            onChanged: (v) => setState(() => _lactationPeriod = v),
-          ),
-          const SizedBox(height: 16),
-          _buildLabel('Identify dry period'),
-          const SizedBox(height: 8),
-          _dateField(
-            hint: 'Enter Month',
-            value: _dryPeriod,
-            onChanged: (v) => setState(() => _dryPeriod = v),
-          ),
-          const SizedBox(height: 24),
-        ],
-
-        // ── Breeding section ──────────────────────────────────
-        if (_isBreeding) ...[
-          _purposeLabel('Breeding', DAColors.greenMid),
-          const SizedBox(height: 12),
-          _buildLabel('Number of produced offspring'),
-          const SizedBox(height: 8),
-          _dateField(
-            hint: 'Enter',
-            value: _producedOffspring,
-            onChanged: (v) => setState(() => _producedOffspring = v),
-          ),
-          const SizedBox(height: 16),
-          CropField(
-            label: 'Male Stocks',
-            hint: 'Enter',
-            initialValue: _offspringMale,
-            onChanged: (v) => _offspringMale = v,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          ),
-          const SizedBox(height: 16),
-          CropField(
-            label: 'Female Stocks',
-            hint: 'Enter',
-            initialValue: _offspringFemale,
-            onChanged: (v) => _offspringFemale = v,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          ),
-          const SizedBox(height: 16),
-          CropField(
-            label: 'Male to Female Stocks Ratio',
-            hint: 'Enter',
-            initialValue: _offspringMFRatio,
-            onChanged: (v) => _offspringMFRatio = v,
-          ),
-          const SizedBox(height: 16),
-          CropField(
-            label: 'Number of mortalities after birth',
-            hint: 'Enter',
-            initialValue: _mortalitiesAfterBirth,
-            onChanged: (v) => _mortalitiesAfterBirth = v,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          ),
-          const SizedBox(height: 16),
-          _buildLabel('Indicate number of remaining offspring'),
-          const SizedBox(height: 8),
-          _dateField(
-            hint: 'Enter',
-            value: _remainingOffspring,
-            onChanged: (v) => setState(() => _remainingOffspring = v),
-          ),
-          const SizedBox(height: 24),
-        ],
-
         const SizedBox(height: 32),
       ],
     );

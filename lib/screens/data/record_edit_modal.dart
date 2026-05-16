@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/pending_draft_service.dart';
-import '../../services/monitoring_record_service.dart';
 import '../../theme/da_colors.dart';
 import '../../widgets/record_card.dart';
 import '../../widgets/crop_dropdown.dart';
@@ -240,6 +239,15 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
             .map((item) => Map<String, dynamic>.from(item))
             .toList() ??
         [];
+
+    // ✅ For pending records, load commodities from Firebase subcollection
+    if (!widget.record.isLocal &&
+        widget.record.status == 'pending' &&
+        _originalCommodityItems.isEmpty) {
+      print(
+          '🔥 Loading commodities from Firebase subcollection for pending record...');
+      _loadCommoditiesFromFirebase();
+    }
 
     // Debug logging
     print('🔍 [Edit Modal] Type: $type, Commodity Key: $_commodityListKey');
@@ -1107,6 +1115,87 @@ class _DynamicEditFormState extends State<_DynamicEditForm> {
       if (mounted) {
         setState(() => _isSaving = false);
       }
+    }
+  }
+
+  Future<void> _loadCommoditiesFromFirebase() async {
+    try {
+      final docPath = widget.record.documentPath;
+      if (docPath == null) return;
+
+      final implementationType =
+          (widget.record.data?['implementationType'] as String? ?? '')
+              .toLowerCase();
+      final firestore = FirebaseFirestore.instance;
+
+      List<Map<String, dynamic>> loadedCommodities = [];
+
+      if (implementationType == 'collective') {
+        // ✅ COLLECTIVE: Load from group/commodities subcollection
+        final snapshot =
+            await firestore.doc(docPath).collection('commodities').get();
+
+        loadedCommodities = snapshot.docs
+            .map((doc) => {
+                  'id': doc.id,
+                  ...doc.data(),
+                })
+            .toList();
+        print(
+            '   ✅ Loaded ${loadedCommodities.length} commodities from collective');
+      } else if (implementationType == 'individual' ||
+          implementationType == 'hybrid') {
+        // ✅ INDIVIDUAL/HYBRID: Load from members/{saadId}/commodities
+        final groupDocId = docPath.split('/')[1] ?? '';
+        final saadId = widget.record.data?['saadIdNo']?.toString() ?? '';
+
+        if (groupDocId.isNotEmpty && saadId.isNotEmpty) {
+          final snapshot = await firestore
+              .collection('pending_monitoring')
+              .doc(groupDocId)
+              .collection('members')
+              .doc(saadId)
+              .collection('commodities')
+              .get();
+
+          loadedCommodities = snapshot.docs
+              .map((doc) => {
+                    'id': doc.id,
+                    ...doc.data(),
+                  })
+              .toList();
+          print(
+              '   ✅ Loaded ${loadedCommodities.length} commodities from farmer $saadId');
+        }
+      }
+
+      if (loadedCommodities.isNotEmpty && mounted) {
+        // Dispose old controllers
+        for (final controller in _itemControllers.values) {
+          controller.dispose();
+        }
+
+        // Reinitialize item controllers with loaded data
+        final type = widget.record.productionType.toLowerCase();
+        _itemControllers.clear();
+        for (var itemIndex = 0;
+            itemIndex < loadedCommodities.length;
+            itemIndex++) {
+          final item = loadedCommodities[itemIndex];
+          for (final field in _commodityFieldKeys) {
+            _itemControllers['${type}_${itemIndex}_$field'] =
+                TextEditingController(text: item[field]?.toString() ?? '');
+          }
+        }
+
+        setState(() {
+          _originalCommodityItems = loadedCommodities;
+        });
+        print(
+            '   ✅ UI updated with loaded commodities and controllers initialized');
+      }
+    } catch (e) {
+      print('   ❌ Error loading commodities from Firebase: $e');
     }
   }
 

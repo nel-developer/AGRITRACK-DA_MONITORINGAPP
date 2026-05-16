@@ -426,11 +426,13 @@ class LocalFarmerStorageService {
     required String groupName,
     required Map<String, dynamic> data,
   }) async {
+    print(
+        '💾 ⭐ saveGroupData CALLED: productionType=$productionType, groupName=$groupName, members.length=${(data['members'] as List?)?.length ?? 0}');
     final groupDir = await _getGroupDirectory(
       groupName,
       productionType: productionType,
     );
-    final groupDataFile = File('${groupDir.path}/group_data.json');
+    final groupDataFile = File('${groupDir.path}/group.json');
 
     final allowedGroupKeys = <String>{
       'implementationType',
@@ -471,21 +473,89 @@ class LocalFarmerStorageService {
         }).toList() ??
         [];
 
-    final groupData = {
-      for (final entry in data.entries)
-        if (allowedGroupKeys.contains(entry.key))
-          entry.key: entry.key == 'members' ? sanitizedMembers : entry.value,
-      'savedAt': DateTime.now().toIso8601String(),
-    };
+    // ✅ CRITICAL FIX: For hybrid/group implementations, merge members instead of replacing
+    // This ensures all farmers are preserved when saveGroupData is called multiple times
+    print('   🔄 ⭐ STARTING MEMBER MERGE LOGIC');
+    Map<String, dynamic> existingGroupData = {};
+
+    if (await groupDataFile.exists()) {
+      try {
+        final existingContent = await groupDataFile.readAsString();
+        existingGroupData = jsonDecode(existingContent) as Map<String, dynamic>;
+        final memberCount =
+            (existingGroupData['members'] as List?)?.length ?? 0;
+        print('   📖 ⭐ Found existing group.json with members: $memberCount');
+      } catch (e) {
+        print('⚠️ ⭐ Could not read existing group.json: $e, will overwrite');
+      }
+    } else {
+      print('   📝 ⭐ group.json not found, creating new');
+    }
+
+    // Merge members: keep existing members and add new ones (avoid duplicates)
+    final existingMembers =
+        (existingGroupData['members'] as List<dynamic>?)?.toList() ?? [];
+    final sanitizedCount = sanitizedMembers.length;
+    print(
+        '   🔄 ⭐ MERGE: existingMembers=${existingMembers.length}, sanitized=$sanitizedCount');
+
+    final allMembers = <Map<String, dynamic>>[];
+    final seenNames = <String>{};
+
+    // Add existing members
+    for (final member in existingMembers) {
+      if (member is Map<String, dynamic>) {
+        final name = (member['name'] as String?)?.trim() ?? '';
+        if (name.isNotEmpty && !seenNames.contains(name)) {
+          allMembers.add(member);
+          seenNames.add(name);
+          print('      ✅ ⭐ EXISTING: added "$name"');
+        }
+      }
+    }
+
+    // Add new members from current data
+    for (final member in sanitizedMembers) {
+      if (member is Map<String, dynamic>) {
+        final name = (member['name'] as String?)?.trim() ?? '';
+        if (name.isNotEmpty && !seenNames.contains(name)) {
+          allMembers.add(member);
+          seenNames.add(name);
+          print('      ✅ ⭐ NEW: added "$name"');
+        } else if (name.isNotEmpty) {
+          print('      ⏭️ ⭐ DUPLICATE: skipped "$name"');
+        }
+      }
+    }
+    print('   🔄 ⭐ MERGE RESULT: final allMembers=${allMembers.length}');
+
+    // ✅ CRITICAL: Preserve ALL existing fields from file, merge with new data
+    final groupData = Map<String, dynamic>.from(existingGroupData);
+
+    // Update with new data, but only for allowed keys
+    for (final entry in data.entries) {
+      if (allowedGroupKeys.contains(entry.key)) {
+        if (entry.key == 'members') {
+          groupData['members'] = allMembers;
+          print('   ✅ ⭐ SET: members = ${allMembers.length} items');
+        } else {
+          groupData[entry.key] = entry.value;
+          if (entry.key == 'implementationType') {
+            print('   ✅ ⭐ SET: implementationType = ${entry.value}');
+          }
+        }
+      }
+    }
+
+    groupData['savedAt'] = DateTime.now().toIso8601String();
 
     await groupDataFile.writeAsString(jsonEncode(groupData));
     print(
-        '📁 LocalFarmerStorageService: wrote group_data.json to ${groupDataFile.path}');
+        '📁 ⭐ LocalFarmerStorageService: WROTE group.json to ${groupDataFile.path} with ${allMembers.length} members');
     return groupDataFile.path;
   }
 
   /// Get saved group metadata
-  /// Checks both group_data.json (new) and group.json (old) for backward compatibility
   Future<Map<String, dynamic>?> getGroupData({
     required String productionType,
     required String groupName,
@@ -495,12 +565,8 @@ class LocalFarmerStorageService {
       productionType: productionType,
     );
 
-    // Try new format first
-    var groupDataFile = File('${groupDir.path}/group_data.json');
-    if (!await groupDataFile.exists()) {
-      // Fall back to old format
-      groupDataFile = File('${groupDir.path}/group.json');
-    }
+    // Read group.json
+    var groupDataFile = File('${groupDir.path}/group.json');
 
     if (!await groupDataFile.exists()) {
       return null;
@@ -618,8 +684,8 @@ class LocalFarmerStorageService {
             print('❌ Failed to read collective from $groupName: $e');
           }
         } else {
-          // INDIVIDUAL/HYBRID: Load from farmer subfolders
-          // ALSO load group.json for project background
+          // INDIVIDUAL/HYBRID: Both now use farmer subfolders
+          // Load group.json for project background
           Map<String, dynamic>? groupData;
           if (groupJsonExists) {
             try {
@@ -630,6 +696,13 @@ class LocalFarmerStorageService {
             }
           }
 
+          // Count farmer subfolders for detection
+          final farmerCount = groupContentsForDetection
+              .whereType<Directory>()
+              .where((dir) => File('${dir.path}/data.json').existsSync())
+              .length;
+
+          // Load from farmer subfolders (works for both individual and hybrid)
           for (final farmerEntity in groupContentsForDetection) {
             if (farmerEntity is! Directory) continue;
 
@@ -642,21 +715,20 @@ class LocalFarmerStorageService {
                 final content = await dataFile.readAsString();
                 final data = jsonDecode(content) as Map<String, dynamic>;
 
-                // Extract farmer info from data
-                final farmerName = (data['farmerName'] as String? ?? '').trim();
+                // Extract farmer info
+                final farmerName = (data['name'] as String? ??
+                        data['farmerName'] as String? ??
+                        '')
+                    .trim();
                 final saadId = (data['saadIdNo'] as String? ?? '').trim();
 
-                // Determine if Individual or Hybrid based on number of farmers
-                final farmerCount = groupContentsForDetection
-                    .whereType<Directory>()
-                    .where((dir) => File('${dir.path}/data.json').existsSync())
-                    .length;
+                // ✅ INDIVIDUAL has 1 farmer, HYBRID has multiple
                 final implType = farmerCount == 1 ? 'individual' : 'hybrid';
 
                 // MERGE group background + farmer data
                 final mergedData = {
-                  ...?groupData, // Add group.json data first (fcaName, projectTitle, etc)
-                  ...data, // Then override with farmer-specific data
+                  ...?groupData,
+                  ...data,
                 };
 
                 records.add({
@@ -846,25 +918,26 @@ class LocalFarmerStorageService {
     // Save commodity picture if provided
     if (commodityPictureBytes != null && commodityPictureBytes.isNotEmpty) {
       final variety = (newCommodity['variety'] as String? ?? '').trim();
-      
+
       // Get GPS coordinates from photoGPS if available
       final photoGPS = newCommodity['photoGPS'] as Map<String, dynamic>? ?? {};
       final latitude = photoGPS['latitude'];
       final longitude = photoGPS['longitude'];
-      
+
       // Format filename: crops_{variety}_{latitude}_{longitude}.jpg
       String pictureName;
       if (variety.isNotEmpty && latitude != null && longitude != null) {
         // Format coordinates: remove decimal point and limit precision
         final latStr = latitude.toString().replaceAll('.', '_');
         final lonStr = longitude.toString().replaceAll('.', '_');
-        pictureName = 'crops_${variety}_${latStr}_${lonStr}.$commodityImageExtension';
+        pictureName =
+            'crops_${variety}_${latStr}_$lonStr.$commodityImageExtension';
       } else if (variety.isNotEmpty) {
         pictureName = 'crops_$variety.$commodityImageExtension';
       } else {
         pictureName = 'commodity.$commodityImageExtension';
       }
-      
+
       final pictureFile = File('${farmerDir.path}/$pictureName');
 
       await pictureFile.writeAsBytes(commodityPictureBytes);

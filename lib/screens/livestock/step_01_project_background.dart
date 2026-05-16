@@ -536,57 +536,9 @@ class _LivestockStep1ProjectBackgroundState
                   color: DAColors.greenMid)),
         ]),
       ),
-      // Purpose fields shown for ALL production types (individual, collective, hybrid)
-      const SizedBox(height: 28),
-      _buildLabel('Purpose of Production'),
-      const SizedBox(height: 12),
-      _buildCheckbox(
-          label: 'Breeding',
-          value: c.purposeBreeding,
-          onChanged: (v) => setState(() => c.purposeBreeding = v ?? false)),
-      const SizedBox(height: 10),
-      _buildCheckbox(
-          label: 'Meat / Fattener',
-          value: c.purposeMeat,
-          onChanged: (v) => setState(() => c.purposeMeat = v ?? false)),
-      const SizedBox(height: 10),
-      _buildCheckbox(
-          label: 'Dairy',
-          value: c.purposeDairy,
-          onChanged: (v) => setState(() => c.purposeDairy = v ?? false)),
       const SizedBox(height: 32),
     ]);
   }
-
-  Widget _buildCheckbox(
-          {required String label,
-          required bool value,
-          required ValueChanged<bool?> onChanged}) =>
-      GestureDetector(
-        onTap: () => onChanged(!value),
-        child: Row(children: [
-          AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                  color: value ? DAColors.greenMid : Colors.white,
-                  border: Border.all(
-                      color: value ? DAColors.greenMid : Colors.grey.shade400,
-                      width: 1.8),
-                  borderRadius: BorderRadius.circular(5)),
-              child: value
-                  ? const Icon(Icons.check_rounded,
-                      color: Colors.white, size: 14)
-                  : null),
-          const SizedBox(width: 12),
-          Text(label,
-              style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: DAColors.textDark)),
-        ]),
-      );
 
   Widget _sectionTitle(String t) => Text(t,
       style: GoogleFonts.poppins(

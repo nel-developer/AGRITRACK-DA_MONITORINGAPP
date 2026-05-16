@@ -209,30 +209,17 @@ class _LivestockMonitoringSummaryScreenState
       }
 
       // ✅ Save with membersByFarmerId for ALL types
-      final dataToSave = widget.wrapper.toJson();
+      var dataToSave = widget.wrapper.toJson();
 
-      // CRITICAL: For individual farmers, ensure farmerName and saadIdNo are preserved
-      if (widget.wrapper.implementationType?.toLowerCase() == 'individual') {
-        dataToSave['farmerName'] = widget.wrapper.farmerName;
-        dataToSave['saadIdNo'] = widget.wrapper.saadIdNo;
-        dataToSave['members'] = [];
-        dataToSave['membersByFarmerId'] = {};
-        print(
-            '👤 INDIVIDUAL RECORD: farmerName=${dataToSave['farmerName']}, saadIdNo=${dataToSave['saadIdNo']}');
-      } else if (widget.wrapper.implementationType?.toLowerCase() ==
-          'collective') {
+      // CRITICAL: For all types, handle membersByFarmerId appropriately
+      if (widget.wrapper.implementationType?.toLowerCase() == 'collective') {
         // For collective records, store commodities and trainings directly at root level
         // Don't use membersByFarmerId for collective - store data directly in group record
         dataToSave['membersByFarmerId'] = {};
         dataToSave['members'] = [];
         print('👥 COLLECTIVE RECORD: Storing data directly in group record');
       } else {
-        // For hybrid/group records, use membersByFarmerId
-        dataToSave['membersByFarmerId'] = membersByFarmerId;
-      }
-      // Update members list to include all farmers for local folder saving (only for collectives/hybrids)
-      if (widget.wrapper.implementationType?.toLowerCase() != 'individual' &&
-          widget.wrapper.implementationType?.toLowerCase() != 'collective') {
+        // Individual/Hybrid: Use membersByFarmerId structure (individual has 1 farmer, hybrid has multiple)
         dataToSave['membersByFarmerId'] = membersByFarmerId;
         dataToSave['members'] = membersByFarmerId.entries.map((entry) {
           final farmerData = entry.value as Map<String, dynamic>;
@@ -241,6 +228,11 @@ class _LivestockMonitoringSummaryScreenState
             'saadIdNo': entry.key,
           };
         }).toList();
+        print(
+            '👤/👥 INDIVIDUAL/HYBRID RECORD: Using membersByFarmerId for sync (${membersByFarmerId.length} farmer(s))');
+      }
+      // Update members list to include all farmers for local folder saving (only for hybrids)
+      if (widget.wrapper.implementationType?.toLowerCase() == 'hybrid') {
         print('📁 Members list for folder save: ${dataToSave['members']}');
         print('📁 Complete members data:');
         for (final m in dataToSave['members']) {
@@ -524,29 +516,109 @@ class _LivestockMonitoringSummaryScreenState
     // CRITICAL: Before navigating, accumulate current batch data
     // This prevents overwrites when adding another batch
     if (widget.wrapper.breed != null && widget.wrapper.breed!.isNotEmpty) {
-      // ✅ For collective groups: Assign to ALL farmers in the group
-      // This ensures commodities get assigned to each farmer when syncing to Firebase
-      for (final member in widget.wrapper.members) {
-        final memberName = (member['name'] as String? ?? '').trim();
-        final memberSaadId = (member['saadIdNo'] as String? ?? '').trim();
-        if (memberName.isNotEmpty) {
-          widget.wrapper.completedBatches.add({
-            'breed': widget.wrapper.breed,
-            'farmerName': memberName,
-            'saadIdNo': memberSaadId.isNotEmpty ? memberSaadId : memberName,
-            'inputsReceived': widget.wrapper.inputsReceived
-                .map((item) => item.toJson())
-                .toList(),
-            'inputsPurchased': widget.wrapper.inputsPurchased
-                .map((item) => item.toJson())
-                .toList(),
-            'farmgatePrices': widget.wrapper.farmgatePrices,
-            'stocksReceived': widget.wrapper.stocksReceived,
-            'dateReceived': widget.wrapper.dateReceived,
-            'maleStocks': widget.wrapper.maleStocks,
-            'femaleStocks': widget.wrapper.femaleStocks,
-            'maleToFemaleRatio': widget.wrapper.maleToFemaleRatio,
-          });
+      // ✅ COLLECTIVE: No members list, store batch directly at root level
+      if (widget.wrapper.implementationType?.toLowerCase() == 'collective') {
+        widget.wrapper.completedBatches.add({
+          'breed': widget.wrapper.breed,
+          'inputsReceived': widget.wrapper.inputsReceived
+              .map((item) => item.toJson())
+              .toList(),
+          'inputsPurchased': widget.wrapper.inputsPurchased
+              .map((item) => item.toJson())
+              .toList(),
+          'farmgatePrices': widget.wrapper.farmgatePrices,
+          'stocksReceived': widget.wrapper.stocksReceived,
+          'dateReceived': widget.wrapper.dateReceived,
+          'maleStocks': widget.wrapper.maleStocks,
+          'femaleStocks': widget.wrapper.femaleStocks,
+          'maleToFemaleRatio': widget.wrapper.maleToFemaleRatio,
+          'ageUponReceipt': widget.wrapper.ageUponReceipt,
+          'avgWeightUponReceipt': widget.wrapper.avgWeightUponReceipt,
+          'pregnantStocks': widget.wrapper.pregnantStocks,
+          'housingType': widget.wrapper.housingType,
+          'farmOwnership': widget.wrapper.farmOwnership,
+          'farmOwnershipOther': widget.wrapper.farmOwnershipOther,
+          'usufruct': widget.wrapper.usufruct,
+          'usufructRemarks': widget.wrapper.usufructRemarks,
+          'healthActivities': widget.wrapper.healthActivities,
+          'healthOthers': widget.wrapper.healthOthers,
+          'wasteManagement': widget.wrapper.wasteManagement,
+          'grazingArea': widget.wrapper.grazingArea,
+          'feeds': widget.wrapper.feeds,
+          'waterSources': widget.wrapper.waterSources,
+          'growOutPeriod': widget.wrapper.growOutPeriod,
+          'lactationPeriod': widget.wrapper.lactationPeriod,
+          'dryPeriod': widget.wrapper.dryPeriod,
+          'soldAsLiveweight': widget.wrapper.soldAsLiveweight,
+          'soldAsLiveweightRemarks': widget.wrapper.soldAsLiveweightRemarks,
+          'avgMarketableWeight': widget.wrapper.avgMarketableWeight,
+          'milkVolumeDaily': widget.wrapper.milkVolumeDaily,
+          'farmgatePriceMilk': widget.wrapper.farmgatePriceMilk,
+          'milkUnit': widget.wrapper.milkUnit,
+          'slaughteredCount': widget.wrapper.slaughteredCount,
+          'slaughteredPrice': widget.wrapper.slaughteredPrice,
+          'producedOffspring': widget.wrapper.producedOffspring,
+          'offspringMale': widget.wrapper.offspringMale,
+          'offspringFemale': widget.wrapper.offspringFemale,
+          'offspringMFRatio': widget.wrapper.offspringMFRatio,
+          'mortalitiesAfterBirth': widget.wrapper.mortalitiesAfterBirth,
+          'remainingOffspring': widget.wrapper.remainingOffspring,
+          'postharvest': widget.wrapper.postharvest,
+          'postharvestRemarks': widget.wrapper.postharvestRemarks,
+          'processing': widget.wrapper.processing,
+          'processingRemarks': widget.wrapper.processingRemarks,
+          'hasPest': widget.wrapper.hasPest,
+          'pestOccurrence': widget.wrapper.pestOccurrence,
+          'pestDate': widget.wrapper.pestDate,
+          'pestMortality': widget.wrapper.pestMortality,
+          'pestTreatment': widget.wrapper.pestTreatment,
+          'pestAttached': widget.wrapper.pestAttached,
+          'hasDisease': widget.wrapper.hasDisease,
+          'diseaseOccurrence': widget.wrapper.diseaseOccurrence,
+          'diseaseDate': widget.wrapper.diseaseDate,
+          'diseaseMortality': widget.wrapper.diseaseMortality,
+          'diseaseTreatment': widget.wrapper.diseaseTreatment,
+          'diseaseAttached': widget.wrapper.diseaseAttached,
+          'hasEnvHazard': widget.wrapper.hasEnvHazard,
+          'envOccurrence': widget.wrapper.envOccurrence,
+          'envDate': widget.wrapper.envDate,
+          'envMortality': widget.wrapper.envMortality,
+          'envTreatment': widget.wrapper.envTreatment,
+          'envAttached': widget.wrapper.envAttached,
+          'hasHumanInduced': widget.wrapper.hasHumanInduced,
+          'humanOccurrence': widget.wrapper.humanOccurrence,
+          'humanDate': widget.wrapper.humanDate,
+          'humanMortality': widget.wrapper.humanMortality,
+          'humanRemainingStocks': widget.wrapper.humanRemainingStocks,
+          'humanTreatment': widget.wrapper.humanTreatment,
+          'humanAttached': widget.wrapper.humanAttached,
+        });
+        print('✅ Added batch to collective: ${widget.wrapper.breed}');
+      } else {
+        // ✅ HYBRID/INDIVIDUAL: Assign to ALL farmers in the group
+        // This ensures batches get assigned to each farmer when syncing to Firebase
+        for (final member in widget.wrapper.members) {
+          final memberName = (member['name'] as String? ?? '').trim();
+          final memberSaadId = (member['saadIdNo'] as String? ?? '').trim();
+          if (memberName.isNotEmpty) {
+            widget.wrapper.completedBatches.add({
+              'breed': widget.wrapper.breed,
+              'farmerName': memberName,
+              'saadIdNo': memberSaadId.isNotEmpty ? memberSaadId : memberName,
+              'inputsReceived': widget.wrapper.inputsReceived
+                  .map((item) => item.toJson())
+                  .toList(),
+              'inputsPurchased': widget.wrapper.inputsPurchased
+                  .map((item) => item.toJson())
+                  .toList(),
+              'farmgatePrices': widget.wrapper.farmgatePrices,
+              'stocksReceived': widget.wrapper.stocksReceived,
+              'dateReceived': widget.wrapper.dateReceived,
+              'maleStocks': widget.wrapper.maleStocks,
+              'femaleStocks': widget.wrapper.femaleStocks,
+              'maleToFemaleRatio': widget.wrapper.maleToFemaleRatio,
+            });
+          }
         }
       }
     }
@@ -594,7 +666,8 @@ class _LivestockMonitoringSummaryScreenState
       ..purposeMeat = widget.wrapper.purposeMeat
       ..purposeDairy = widget.wrapper.purposeDairy
       ..implementationType = widget.wrapper.implementationType
-      ..members = List.from(widget.wrapper.members);
+      ..members = List.from(widget.wrapper.members)
+      ..isAddingNewCommodity = true; // ✅ Flag to clear form fields in Step 02
     Navigator.of(context).pushNamed(AppRoutes.livestockStep2, arguments: next);
   }
 

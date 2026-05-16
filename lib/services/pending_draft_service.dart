@@ -751,9 +751,10 @@ class PendingDraftService {
               print(
                   '   📋 Transformed ${membersList.length} members to membersByFarmerId map');
 
-              // ✅ CRITICAL: Load farmer-specific commodities from subfolders
+              // ✅ CRITICAL: Load farmer-specific commodities and batches from subfolders
               // This ensures commodities have the correct saadIdNo
               final allFarmerCommodities = <Map<String, dynamic>>[];
+              final allFarmerBatches = <Map<String, dynamic>>[];
               final foundFarmerIds = <String>{};
 
               for (final saadId in membersByFarmerId.keys) {
@@ -784,18 +785,21 @@ class PendingDraftService {
                     foundFarmerIds.add(saadId);
                     final farmerCommodities =
                         farmerData['completedCommodities'] as List? ?? [];
+                    final farmerBatches =
+                        farmerData['completedBatches'] as List? ?? [];
                     final farmerTrainings =
                         farmerData['trainings'] as List? ?? [];
 
                     print(
                         '   📂 Loaded ${farmerCommodities.length} commodities and ${farmerTrainings.length} trainings for farmer: $farmerName ($saadId)');
 
-                    // Update membersByFarmerId with trainings from the farmer's data
+                    // Update membersByFarmerId with trainings and batches from the farmer's data
                     membersByFarmerId[saadId] = {
                       'farmerName': farmerName,
                       'name': farmerName,
                       'saadIdNo': saadId,
                       'trainings': farmerTrainings,
+                      'completedBatches': farmerBatches,
                     };
 
                     // Ensure each commodity has the farmer's saadIdNo set
@@ -804,6 +808,15 @@ class PendingDraftService {
                         commodity['saadIdNo'] = saadId;
                         commodity['farmerName'] = farmerName;
                         allFarmerCommodities.add(commodity);
+                      }
+                    }
+
+                    // Ensure each batch has the farmer's saadIdNo set (for livestock)
+                    for (final batch in farmerBatches) {
+                      if (batch is Map<String, dynamic>) {
+                        batch['saadIdNo'] = saadId;
+                        batch['farmerName'] = farmerName;
+                        allFarmerBatches.add(batch);
                       }
                     }
                   } else {
@@ -816,8 +829,9 @@ class PendingDraftService {
                 }
               }
 
-              // ✅ FALLBACK: If some farmers weren't found, scan directory for all subfolders
-              if (foundFarmerIds.length < membersByFarmerId.length) {
+              // ✅ FALLBACK: If some farmers weren't found (or membersByFarmerId is empty for individual), scan directory for all subfolders
+              if (membersByFarmerId.isEmpty ||
+                  foundFarmerIds.length < membersByFarmerId.length) {
                 print(
                     '   ⚠️  Some farmers not found. Scanning directory for all farmer folders...');
                 try {
@@ -831,13 +845,23 @@ class PendingDraftService {
                       '   🔍 Found ${allFarmers.length} farmer folders in directory');
 
                   for (final farmer in allFarmers) {
-                    final farmerSaadId = farmer['saadIdNo'] as String? ?? '';
+                    final farmerSaadId = farmer['saadId'] as String? ?? '';
                     final farmerName = farmer['farmerName'] as String? ?? '';
+                    final farmerData =
+                        farmer['data'] as Map<String, dynamic>? ?? {};
 
                     if (farmerSaadId.isNotEmpty &&
                         !foundFarmerIds.contains(farmerSaadId)) {
                       print(
                           '   ✅ Auto-discovered farmer: $farmerName ($farmerSaadId)');
+
+                      // Extract data from farmer['data'] (the full data.json)
+                      final farmerTrainings =
+                          farmerData['trainings'] as List? ?? [];
+                      final farmerBatches =
+                          farmerData['completedBatches'] as List? ?? [];
+                      final farmerCommodities =
+                          farmerData['completedCommodities'] as List? ?? [];
 
                       // Add to membersByFarmerId if not already there
                       if (!membersByFarmerId.containsKey(farmerSaadId)) {
@@ -845,13 +869,12 @@ class PendingDraftService {
                           'farmerName': farmerName,
                           'name': farmerName,
                           'saadIdNo': farmerSaadId,
-                          'trainings': farmer['trainings'] ?? [],
+                          'trainings': farmerTrainings,
+                          'completedBatches': farmerBatches,
                         };
                       }
 
                       // Add their commodities
-                      final farmerCommodities =
-                          farmer['commodities'] as List? ?? [];
                       for (final commodity in farmerCommodities) {
                         if (commodity is Map<String, dynamic>) {
                           commodity['saadIdNo'] = farmerSaadId;
@@ -859,6 +882,16 @@ class PendingDraftService {
                           allFarmerCommodities.add(commodity);
                         }
                       }
+
+                      // Add their batches (livestock)
+                      for (final batch in farmerBatches) {
+                        if (batch is Map<String, dynamic>) {
+                          batch['saadIdNo'] = farmerSaadId;
+                          batch['farmerName'] = farmerName;
+                          allFarmerBatches.add(batch);
+                        }
+                      }
+
                       foundFarmerIds.add(farmerSaadId);
                     }
                   }
@@ -872,6 +905,11 @@ class PendingDraftService {
                 transformedData['completedCommodities'] = allFarmerCommodities;
                 print(
                     '   ✅ Merged ${allFarmerCommodities.length} farmer-specific commodities');
+              }
+              if (allFarmerBatches.isNotEmpty) {
+                transformedData['completedBatches'] = allFarmerBatches;
+                print(
+                    '   ✅ Merged ${allFarmerBatches.length} farmer-specific batches (livestock)');
               }
             }
 

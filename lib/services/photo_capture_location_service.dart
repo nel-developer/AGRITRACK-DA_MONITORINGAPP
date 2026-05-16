@@ -212,12 +212,14 @@ class PhotoCaptureLocationService {
   }) async {
     print('📂 [STORAGE] Starting file move from cache...');
     final rootDirectory = await getApplicationDocumentsDirectory();
-    final folderLabel = groupName.trim().isNotEmpty ? groupName : farmerName;
+
+    // For collective, always use group name. For individual/hybrid, prefer farmer name
+    final folderLabel = implementationType.trim().toLowerCase() == 'collective'
+        ? groupName
+        : (farmerName.trim().isNotEmpty ? farmerName : groupName);
+
     final folderName = _sanitizeFolderPart(
-      folderLabel.trim().isEmpty ? 'profiling_photos' : folderLabel,
-    );
-    final productionFolder = _sanitizeFolderPart(
-      _productionFolderName(productionType),
+      folderLabel.trim().isEmpty ? 'unnamed_group' : folderLabel,
     );
     final implementationFolder = _sanitizeFolderPart(
       _implementationFolderName(implementationType),
@@ -225,8 +227,13 @@ class PhotoCaptureLocationService {
     final productionPart = _sanitizeFilePart(
       productionType.trim().isEmpty ? 'production' : productionType,
     );
+
+    // For filename, use the same logic as folder
     final fileStemSource =
-        farmerName.trim().isNotEmpty ? farmerName : groupName;
+        implementationType.trim().toLowerCase() == 'collective'
+            ? groupName
+            : (farmerName.trim().isNotEmpty ? farmerName : groupName);
+
     final fileStem = _sanitizeFilePart(
       fileStemSource.trim().isEmpty ? 'farm_photo' : fileStemSource,
     );
@@ -234,7 +241,7 @@ class PhotoCaptureLocationService {
     final extension = _fileExtension(sourcePath);
 
     final targetDirectory = Directory(
-      '${rootDirectory.path}${Platform.pathSeparator}profiling_photos${Platform.pathSeparator}$productionFolder${Platform.pathSeparator}$implementationFolder${Platform.pathSeparator}$folderName',
+      '${rootDirectory.path}${Platform.pathSeparator}livestock_photos${Platform.pathSeparator}$implementationFolder${Platform.pathSeparator}$folderName',
     );
     if (!await targetDirectory.exists()) {
       await targetDirectory.create(recursive: true);

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../theme/da_colors.dart';
 import '../../widgets/crop_form_shell.dart';
 import '../../services/pending_draft_service.dart';
@@ -30,6 +31,34 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
   bool _didSaveDraft = false;
   bool _submitRequested = false;
   bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Load trainings from wrapper only if they contain actual data
+    if (w.trainings.isNotEmpty) {
+      // Check if any training has actual data (name, date, or attendees)
+      bool hasActualData = w.trainings.any((training) =>
+          training.name.trim().isNotEmpty ||
+          training.date.trim().isNotEmpty ||
+          training.attendees.trim().isNotEmpty);
+
+      // Only load if there's actual data, otherwise start fresh
+      if (hasActualData) {
+        _trainings.clear();
+        _trainings.addAll(w.trainings);
+      } else {
+        // w.trainings is empty or contains only empty entries
+        // Keep _trainings as [TrainingEntry()] for fresh form
+        _trainings.clear();
+        _trainings.add(TrainingEntry());
+      }
+    } else {
+      // w.trainings is empty, initialize _trainings with one empty entry
+      _trainings.clear();
+      _trainings.add(TrainingEntry());
+    }
+  }
 
   @override
   void dispose() {
@@ -148,6 +177,15 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
     try {
       var jsonData = w.toJson();
 
+      // ✅ CRITICAL: For collective records, clear all member-related fields
+      if (w.implementationType?.toLowerCase() == 'collective') {
+        jsonData['members'] = [];
+        jsonData['saadIdNo'] = '';
+        jsonData['farmerName'] = '';
+        jsonData['membersByFarmerId'] = {};
+        print('✅ COLLECTIVE: Cleared all member-related fields');
+      }
+
       // ✅ CRITICAL: Build membersByFarmerId map for ALL record types
       // (both group and individual with single farmer)
       final members = jsonData['members'] as List? ?? [];
@@ -193,12 +231,76 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
       // Case 2: Collective record with no farmers, store data directly at root level
       else if (w.implementationType?.toLowerCase() == 'collective' &&
           batches.isNotEmpty) {
-        // For collective records, store batches directly at root level, not in membersByFarmerId
-        jsonData['completedBatches'] = batches;
-        jsonData['trainings'] =
-            w.trainings; // Store trainings at root level too
-        print(
-            '✅ Stored collective data directly at root level: ${batches.length} batches, ${w.trainings.length} trainings');
+        // For collective records, load existing group_data.json, append batches, merge trainings
+        try {
+          // Get external storage directory
+          Directory? appDocDir;
+          try {
+            const platform =
+                MethodChannel('com.example.da_monitoring_app/storage');
+            final String result =
+                await platform.invokeMethod('getExternalFilesDir');
+            appDocDir = Directory(result);
+          } catch (e) {
+            appDocDir = await getApplicationDocumentsDirectory();
+          }
+
+          final sanitizedGroup =
+              _sanitizeFolderName(w.fcaName.isNotEmpty ? w.fcaName : 'default');
+          final groupDir = Directory(
+              '${appDocDir.path}/monitoring_records/livestock/$sanitizedGroup');
+
+          // Load existing group_data.json if it exists
+          Map<String, dynamic> existingGroupData = {};
+          final groupDataFile = File('${groupDir.path}/group_data.json');
+
+          if (await groupDataFile.exists()) {
+            try {
+              final content = await groupDataFile.readAsString();
+              existingGroupData = jsonDecode(content) as Map<String, dynamic>;
+              print(
+                  '✅ Loaded existing group_data.json for collective batch merge');
+            } catch (e) {
+              print(
+                  '⚠️ Could not read existing group_data.json: $e, starting fresh');
+              existingGroupData = {};
+            }
+          }
+
+          // Get existing batches and preserve them
+          final existingBatches =
+              (existingGroupData['completedBatches'] as List?)
+                      ?.cast<Map<String, dynamic>>() ??
+                  [];
+
+          // Append new batch(es) to existing batches
+          final newBatches = (jsonData['completedBatches'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              [];
+          existingBatches.addAll(newBatches);
+
+          // Get existing trainings and merge with new ones
+          final existingTrainings = (existingGroupData['trainings'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              [];
+          final newTrainings =
+              w.trainings.map((item) => item.toJson()).toList();
+          existingTrainings.addAll(newTrainings);
+
+          // Update jsonData with merged data
+          jsonData['completedBatches'] = existingBatches;
+          jsonData['trainings'] = existingTrainings;
+
+          print(
+              '✅ Merged collective batches: ${existingBatches.length} total, trainings: ${existingTrainings.length}');
+        } catch (e) {
+          print(
+              '⚠️ Warning: Could not merge collective batch data: $e, will store only current batch');
+          // Fallback: just store current batch without merging
+          jsonData['completedBatches'] = batches;
+          jsonData['trainings'] =
+              w.trainings.map((item) => item.toJson()).toList();
+        }
       }
       // Case 3: Individual record with single farmer
       // ✅ CRITICAL: Include individual farmers even if they have NO batches yet
@@ -224,7 +326,7 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
         }
       }
 
-      print('🔥 Livestock - About to call saveDraft:');
+      print('🔥 Livestock - About to save:');
       print('   implementationType: ${w.implementationType}');
       print('   members: ${jsonData['members']}');
       print(
@@ -232,13 +334,142 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
       print('   farmerName: ${jsonData['farmerName']}');
       print('   fcaName: ${jsonData['fcaName']}');
 
-      await PendingDraftService.instance.saveDraft(
-        productionType: 'livestock',
-        implementationType: w.implementationType ?? 'collective',
-        data: jsonData,
-        source: 'unsync',
-      );
-      _didSaveDraft = true;
+      // ✅ CRITICAL: For COLLECTIVE records, save directly to group.json (matches crop format)
+      if (w.implementationType?.toLowerCase() == 'collective') {
+        try {
+          // Get external storage directory
+          Directory? appDocDir;
+          try {
+            const platform =
+                MethodChannel('com.example.da_monitoring_app/storage');
+            final String result =
+                await platform.invokeMethod('getExternalFilesDir');
+            appDocDir = Directory(result);
+          } catch (e) {
+            appDocDir = await getApplicationDocumentsDirectory();
+          }
+
+          final sanitizedGroup =
+              _sanitizeFolderName(w.fcaName.isNotEmpty ? w.fcaName : 'default');
+          final groupDir = Directory(
+              '${appDocDir.path}/monitoring_records/livestock/$sanitizedGroup');
+
+          // Ensure group folder exists
+          if (!await groupDir.exists()) {
+            await groupDir.create(recursive: true);
+          }
+
+          // ✅ Use group.json (NOT group_data.json) to match crop format
+          final groupJsonFile = File('${groupDir.path}/group.json');
+          Map<String, dynamic> groupData = {};
+
+          // Load existing group.json if it exists
+          if (await groupJsonFile.exists()) {
+            try {
+              final content = await groupJsonFile.readAsString();
+              groupData = jsonDecode(content) as Map<String, dynamic>;
+              print('✅ Loaded existing group.json for collective merge');
+            } catch (e) {
+              print('⚠️ Could not read existing group.json: $e');
+              groupData = {};
+            }
+          }
+
+          // Get existing batches and preserve them
+          final existingBatches = (groupData['completedBatches'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              [];
+
+          // Append only NEW batches (not ones already in file)
+          final newBatches = (jsonData['completedBatches'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              [];
+
+          // ✅ Only append batches that aren't already in the file
+          for (final newBatch in newBatches) {
+            // Check if this batch already exists (by comparing photoGPS as unique identifier)
+            final photoGPS = newBatch['photoGPS'];
+            final alreadyExists = existingBatches.any((existing) {
+              final existingGPS = existing['photoGPS'];
+              return photoGPS != null &&
+                  existingGPS != null &&
+                  photoGPS['latitude'] == existingGPS['latitude'] &&
+                  photoGPS['longitude'] == existingGPS['longitude'] &&
+                  photoGPS['accuracy'] == existingGPS['accuracy'];
+            });
+
+            if (!alreadyExists) {
+              existingBatches.add(newBatch);
+              print('✅ Added new batch: ${newBatch['breed']}');
+            } else {
+              print('⏭️ Skipped duplicate batch: ${newBatch['breed']}');
+            }
+          }
+
+          // Merge trainings arrays - only add NEW trainings
+          final existingTrainings =
+              (groupData['trainings'] as List?)?.cast<Map<String, dynamic>>() ??
+                  [];
+          final newTrainings =
+              (jsonData['trainings'] as List?)?.cast<Map<String, dynamic>>() ??
+                  [];
+
+          // ✅ Only append trainings that aren't already in the file
+          for (final newTraining in newTrainings) {
+            final trainingName = newTraining['name'];
+            final trainingDate = newTraining['date'];
+            final alreadyExists = existingTrainings.any((existing) {
+              return existing['name'] == trainingName &&
+                  existing['date'] == trainingDate;
+            });
+
+            if (!alreadyExists) {
+              existingTrainings.add(newTraining);
+              print('✅ Added new training: $trainingName on $trainingDate');
+            } else {
+              print(
+                  '⏭️ Skipped duplicate training: $trainingName on $trainingDate');
+            }
+          }
+
+          // Update group data with merged batches and trainings
+          groupData['implementationType'] = jsonData['implementationType'];
+          groupData['reportingPeriod'] = jsonData['reportingPeriod'];
+          groupData['fcaName'] = w.fcaName;
+          groupData['region'] = jsonData['region'];
+          groupData['province'] = jsonData['province'];
+          groupData['municipality'] = jsonData['municipality'];
+          groupData['barangay'] = jsonData['barangay'];
+          groupData['projectTitle'] = jsonData['projectTitle'];
+          groupData['primaryIntervention'] = jsonData['primaryIntervention'];
+          groupData['supportInterventions'] = jsonData['supportInterventions'];
+          groupData['members'] = [];
+          groupData['completedBatches'] = existingBatches;
+          groupData['trainings'] = existingTrainings;
+
+          // Write merged data back to same file (NO new folder)
+          await groupJsonFile.writeAsString(jsonEncode(groupData));
+          print(
+              '✅ COLLECTIVE: Merged to group.json - ${existingBatches.length} batches, ${existingTrainings.length} trainings');
+          _didSaveDraft = true;
+        } catch (e) {
+          print('❌ ERROR saving collective: $e');
+          rethrow;
+        }
+      } else {
+        // ✅ For INDIVIDUAL/HYBRID records, use folder-based structure (like crops)
+        await _saveLivestockRecordByFolders(jsonData, 'livestock');
+        _didSaveDraft = true;
+      }
+
+      // ✅ CRITICAL: Save photo locally with GPS metadata
+      if (_photoPath.isNotEmpty) {
+        try {
+          await _saveLivestockPhotoLocally();
+        } catch (e) {
+          print('⚠️ Photo save error (non-blocking): $e');
+        }
+      }
 
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -276,8 +507,8 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
     }
   }
 
-  void _persistCurrentLivestockBatch() {
-    if (w.breed == null || w.breed!.trim().isEmpty) return;
+  Map<String, dynamic> _persistCurrentLivestockBatch() {
+    if (w.breed == null || w.breed!.trim().isEmpty) return {};
 
     final batch = {
       'breed': w.breed,
@@ -350,6 +581,16 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
       'humanRemainingStocks': w.humanRemainingStocks,
       'humanTreatment': w.humanTreatment,
       'humanAttached': w.humanAttached,
+      // ── Step 07: Trainings Attended ──
+      'trainings': w.trainings.map((t) => t.toJson()).toList(),
+      'farmPhoto': w.farmPhoto,
+      // ✅ Add GPS coordinates to batch data (like crops do)
+      if (_photoLatitude != null && _photoLongitude != null)
+        'photoGPS': {
+          'latitude': _photoLatitude!,
+          'longitude': _photoLongitude!,
+          'accuracy': _photoAccuracy ?? 0.0,
+        },
     };
 
     final currentFarmerName = w.farmerName.trim();
@@ -383,6 +624,325 @@ class _LivestockStep7State extends State<LivestockStep7Trainings> {
         w.completedBatches.add(candidate);
       }
     }
+
+    // ✅ Return the batch for use in folder-based save
+    return batch;
+  }
+
+  /// Save livestock photo locally with GPS metadata
+  /// COLLECTIVE: Single group folder with photos
+  /// INDIVIDUAL/HYBRID: Group folder + farmer subfolders with photos
+  Future<void> _saveLivestockPhotoLocally() async {
+    if (_photoPath.isEmpty) return;
+
+    try {
+      final sourceFile = File(_photoPath);
+      if (!await sourceFile.exists()) return;
+
+      // Get external storage directory
+      Directory? appDocDir;
+      try {
+        const platform = MethodChannel('com.example.da_monitoring_app/storage');
+        final String result =
+            await platform.invokeMethod('getExternalFilesDir');
+        appDocDir = Directory(result);
+      } catch (e) {
+        appDocDir = await getApplicationDocumentsDirectory();
+      }
+
+      final implementationType =
+          w.implementationType?.toLowerCase() ?? 'collective';
+      final isCollective = implementationType == 'collective';
+      final sanitizedGroup =
+          _sanitizeFolderName(w.fcaName.isNotEmpty ? w.fcaName : 'default');
+
+      // Determine photo directory based on record type
+      Directory photoDir;
+      if (isCollective) {
+        // COLLECTIVE: Photo directly in group folder
+        photoDir = Directory(
+            '${appDocDir.path}/monitoring_records/livestock/$sanitizedGroup');
+      } else {
+        // INDIVIDUAL/HYBRID: Photo in farmer subfolder (with SAAD ID)
+        final sanitizedFarmer = _sanitizeFolderName(
+            w.farmerName.isNotEmpty ? w.farmerName : 'farmer');
+        final sanitizedSaadId =
+            w.saadIdNo.isEmpty ? '' : '_${_sanitizeFolderName(w.saadIdNo)}';
+        final farmerFolderName = '$sanitizedFarmer$sanitizedSaadId';
+        photoDir = Directory(
+            '${appDocDir.path}/monitoring_records/livestock/$sanitizedGroup/$farmerFolderName');
+      }
+
+      if (!await photoDir.exists()) {
+        await photoDir.create(recursive: true);
+      }
+
+      // Create filename with timestamp
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final extension = _photoPath.split('.').last;
+      final photoDestPath = '${photoDir.path}/picture_$timestamp.$extension';
+
+      // Copy photo to destination
+      await sourceFile.copy(photoDestPath);
+      print(
+          '✅ Livestock photo saved: $photoDestPath (${isCollective ? 'collective' : 'individual/hybrid'})');
+
+      // Add GPS to EXIF metadata if available
+      if (_photoLatitude != null && _photoLongitude != null) {
+        try {
+          const platform = MethodChannel('com.example.da_monitoring_app/exif');
+          await platform.invokeMethod('setExifGPS', {
+            'imagePath': photoDestPath,
+            'latitude': _photoLatitude!,
+            'longitude': _photoLongitude!,
+            'accuracy': _photoAccuracy ?? 0.0,
+          });
+          print(
+              '✅ GPS metadata embedded: $_photoLatitude, $_photoLongitude (±${_photoAccuracy?.toStringAsFixed(0)}m)');
+        } catch (e) {
+          print('⚠️ Failed to embed GPS metadata: $e (photo still saved)');
+        }
+      }
+    } catch (e) {
+      print('❌ Error saving livestock photo: $e');
+      rethrow;
+    }
+  }
+
+  /// ✅ Save INDIVIDUAL/HYBRID livestock records using folder-based structure
+  ///
+  /// BOTH INDIVIDUAL & HYBRID use the same structure with farmer subfolders:
+  ///
+  /// INDIVIDUAL: Single farmer
+  /// monitoring_records/livestock/
+  ///   GroupName/
+  ///     ├── group.json          ← Step 01 data only (empty members)
+  ///     └── Farmer1_SAAD01/
+  ///         └── data.json       ← Steps 02-07 (farmer's batches + trainings)
+  ///
+  /// HYBRID: Multiple farmers
+  /// monitoring_records/livestock/
+  ///   GroupName/
+  ///     ├── group.json          ← Step 01 data (project background + members)
+  ///     ├── Farmer1_SAAD01/
+  ///     │   └── data.json       ← Steps 02-07 (farmer 1 only)
+  ///     └── Farmer2_SAAD02/
+  ///         └── data.json       ← Steps 02-07 (farmer 2 only)
+  Future<void> _saveLivestockRecordByFolders(
+    Map<String, dynamic> jsonData,
+    String productionType,
+  ) async {
+    print('\n📁 LIVESTOCK: Saving using folder structure...');
+    final implementationType =
+        (jsonData['implementationType'] as String? ?? '').toLowerCase();
+    final isHybrid = implementationType == 'hybrid';
+    final isIndividual = implementationType == 'individual';
+    final farmerName = (jsonData['farmerName'] as String? ?? '').trim();
+    final saadIdNo = (jsonData['saadIdNo'] as String? ?? '').trim();
+    final fcaName = (jsonData['fcaName'] as String? ?? '').trim();
+
+    print(
+        '   Type: ${isHybrid ? 'HYBRID' : 'INDIVIDUAL'} | Farmer: $farmerName | Group: $fcaName');
+
+    // Get monitoring records directory
+    Directory? appDocDir;
+    try {
+      const platform = MethodChannel('com.example.da_monitoring_app/storage');
+      final String result = await platform.invokeMethod('getExternalFilesDir');
+      appDocDir = Directory(result);
+    } catch (e) {
+      appDocDir = await getApplicationDocumentsDirectory();
+    }
+
+    final monitoringDir =
+        Directory('${appDocDir.path}/monitoring_records/$productionType');
+
+    if (!await monitoringDir.exists()) {
+      await monitoringDir.create(recursive: true);
+    }
+
+    if (farmerName.isEmpty) {
+      throw Exception(
+          '❌ ERROR: Farmer name is REQUIRED! Please select or enter a farmer name.');
+    }
+
+    if (isHybrid && fcaName.isEmpty) {
+      throw Exception('FCA name is required for hybrid records');
+    }
+
+    // Determine folder structure
+    final groupName =
+        isHybrid ? fcaName : (fcaName.isNotEmpty ? fcaName : farmerName);
+    final sanitizedGroupName = _sanitizeFolderName(groupName);
+    final groupDir = Directory('${monitoringDir.path}/$sanitizedGroupName');
+
+    if (!await groupDir.exists()) {
+      await groupDir.create(recursive: true);
+    }
+
+    // Save group.json with ONLY Step 01 data (created once per group)
+    final groupJsonFile = File('${groupDir.path}/group.json');
+    if (!await groupJsonFile.exists()) {
+      final groupData = <String, dynamic>{
+        'implementationType': jsonData['implementationType'],
+        'reportingPeriod': jsonData['reportingPeriod'],
+        'fcaName': fcaName,
+        'region': jsonData['region'],
+        'province': jsonData['province'],
+        'municipality': jsonData['municipality'],
+        'barangay': jsonData['barangay'],
+        'projectTitle': jsonData['projectTitle'],
+        'primaryIntervention': jsonData['primaryIntervention'],
+        'supportInterventions': jsonData['supportInterventions'],
+        'members': isHybrid ? (jsonData['members'] as List? ?? []) : [],
+        'createdAt': DateTime.now().toIso8601String(),
+      };
+      await groupJsonFile.writeAsString(jsonEncode(groupData));
+      print('✅ Created group.json');
+    }
+
+    // Save farmer's data in their own folder
+    final sanitizedFarmerName = _sanitizeFolderName(farmerName);
+    final sanitizedSaadId =
+        saadIdNo.isEmpty ? '' : '_${_sanitizeFolderName(saadIdNo)}';
+    final farmerFolderName = '$sanitizedFarmerName$sanitizedSaadId';
+
+    final farmerDir = Directory('${groupDir.path}/$farmerFolderName');
+    if (!await farmerDir.exists()) {
+      await farmerDir.create(recursive: true);
+    }
+
+    // Build farmer-specific data (Steps 02-07 only)
+    final farmerData = <String, dynamic>{
+      'name': farmerName,
+      'saadIdNo': saadIdNo,
+      'completedBatches': [],
+      'trainings': [],
+    };
+
+    // Extract current batch
+    final currentBatch = _persistCurrentLivestockBatch();
+    final farmerBatches = <Map<String, dynamic>>[currentBatch];
+
+    // Build trainings list
+    final trainings = _trainings
+        .where((t) => t.name.trim().isNotEmpty)
+        .map((t) => t.toJson() as Map<String, dynamic>)
+        .toList();
+
+    farmerData['completedBatches'] = farmerBatches;
+    farmerData['trainings'] = trainings;
+
+    final farmerJsonFile = File('${farmerDir.path}/data.json');
+
+    // ✅ CRITICAL: If data.json exists, MERGE batches (don't replace)
+    if (await farmerJsonFile.exists()) {
+      try {
+        final existingContent = await farmerJsonFile.readAsString();
+        final existingData =
+            jsonDecode(existingContent) as Map<String, dynamic>;
+
+        // Get existing batches
+        final existingBatches = (existingData['completedBatches'] as List?)
+                ?.cast<Map<String, dynamic>>() ??
+            [];
+
+        // ✅ Only append NEW batch if it doesn't already exist (by GPS)
+        final newBatch = farmerBatches.first;
+        final photoGPS = newBatch['photoGPS'];
+        final alreadyExists = existingBatches.any((existing) {
+          final existingGPS = existing['photoGPS'];
+          return photoGPS != null &&
+              existingGPS != null &&
+              photoGPS['latitude'] == existingGPS['latitude'] &&
+              photoGPS['longitude'] == existingGPS['longitude'] &&
+              photoGPS['accuracy'] == existingGPS['accuracy'];
+        });
+
+        if (!alreadyExists) {
+          existingBatches.add(newBatch);
+          print('✅ Added new batch: ${newBatch['breed']}');
+        } else {
+          print('⏭️ Skipped duplicate batch: ${newBatch['breed']}');
+        }
+
+        // Merge trainings (only add new trainings)
+        final existingTrainings = (existingData['trainings'] as List?)
+                ?.cast<Map<String, dynamic>>() ??
+            [];
+
+        for (final newTraining in trainings) {
+          final trainingName = newTraining['name'];
+          final trainingDate = newTraining['date'];
+          final trainingExists = existingTrainings.any((existing) =>
+              existing['name'] == trainingName &&
+              existing['date'] == trainingDate);
+
+          if (!trainingExists) {
+            existingTrainings.add(newTraining);
+            print('✅ Added training: $trainingName on $trainingDate');
+          } else {
+            print('⏭️ Skipped duplicate training: $trainingName');
+          }
+        }
+
+        // Update farmer data
+        farmerData['completedBatches'] = existingBatches;
+        farmerData['trainings'] = existingTrainings;
+
+        // Write merged data
+        await farmerJsonFile.writeAsString(jsonEncode(farmerData));
+        print(
+            '✅ Merged data.json - ${existingBatches.length} batches, ${existingTrainings.length} trainings');
+      } catch (e) {
+        print('⚠️ Could not merge existing data: $e, will overwrite');
+        await farmerJsonFile.writeAsString(jsonEncode(farmerData));
+      }
+    } else {
+      // First time saving for this farmer
+      await farmerJsonFile.writeAsString(jsonEncode(farmerData));
+      print('✅ Created data.json');
+    }
+
+    // Update group.json members list (hybrid only)
+    if (isHybrid) {
+      try {
+        final groupJsonContent = jsonDecode(await groupJsonFile.readAsString())
+            as Map<String, dynamic>;
+        final existingMembers = (groupJsonContent['members'] as List?)
+                ?.cast<Map<String, dynamic>>() ??
+            [];
+
+        final farmerExists = existingMembers.any((m) =>
+            (m['name']?.toString().trim().toLowerCase() ==
+                farmerName.trim().toLowerCase()) &&
+            (m['saadIdNo']?.toString().trim() == saadIdNo.trim()));
+
+        if (!farmerExists) {
+          existingMembers.add({
+            'name': farmerName.trim(),
+            'saadIdNo': saadIdNo.trim(),
+          });
+          groupJsonContent['members'] = existingMembers;
+          await groupJsonFile.writeAsString(jsonEncode(groupJsonContent));
+          print('✅ Added farmer to members list');
+        }
+      } catch (e) {
+        print('⚠️ Could not update members list: $e');
+      }
+    }
+
+    print('✅ LIVESTOCK: Record saved to folder structure');
+  }
+
+  /// Sanitize folder names by removing invalid characters
+  String _sanitizeFolderName(String name) {
+    return name
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll('__', '_')
+        .replaceFirst(RegExp(r'^_+'), '')
+        .replaceFirst(RegExp(r'_+$'), '');
   }
 
   Future<void> _handleBack() async {

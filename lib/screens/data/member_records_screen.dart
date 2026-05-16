@@ -94,12 +94,14 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
           '🔍 Got ${unsyncRecordsFromFolders.length} unsync records from folders');
       _remoteStatusMessage = null;
 
-      // ✅ For COLLECTIVE widget.record, load group.json if commodities missing
+      // ✅ For COLLECTIVE widget.record, load group.json if commodities/batches missing
       // BUT ONLY for UNSYNC records! PENDING records must use Firebase only
       if (widget.record.implType.toLowerCase() == 'collective' &&
           widget.record.status == 'unsync' &&
-          ((widget.record.data?['completedCommodities'] as List?)?.isEmpty ??
-              true)) {
+          (((widget.record.data?['completedCommodities'] as List?)?.isEmpty ??
+                  true) &&
+              ((widget.record.data?['completedBatches'] as List?)?.isEmpty ??
+                  true))) {
         try {
           const baseDir =
               '/storage/emulated/0/Android/data/com.example.da_monitoring_app/files/monitoring_records';
@@ -114,36 +116,44 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
             final content = groupFile.readAsStringSync();
             final groupJson = jsonDecode(content) as Map<String, dynamic>;
 
-            // Update widget.record.data with loaded commodities
+            // Update widget.record.data with loaded commodities/batches
             if (widget.record.data != null) {
+              // For crops: load completedCommodities
               if (groupJson.containsKey('completedCommodities')) {
                 widget.record.data!['completedCommodities'] =
                     groupJson['completedCommodities'];
               }
+              // For livestock: load completedBatches
+              if (groupJson.containsKey('completedBatches')) {
+                widget.record.data!['completedBatches'] =
+                    groupJson['completedBatches'];
+              }
+              // Both types: load trainings
               if (groupJson.containsKey('trainings')) {
                 widget.record.data!['trainings'] = groupJson['trainings'];
               }
             }
             print(
-                '✅ [LOAD COLLECTIVE] Loaded ${(groupJson['completedCommodities'] as List?)?.length ?? 0} commodities into widget.record');
+                '✅ [LOAD COLLECTIVE] Loaded ${(groupJson['completedCommodities'] as List?)?.length ?? (groupJson['completedBatches'] as List?)?.length ?? 0} items into widget.record');
           }
         } catch (e) {
           print('⚠️ [LOAD COLLECTIVE] Error: $e');
         }
       } else if (widget.record.status == 'pending' &&
           widget.record.data != null) {
-        // ✅ CRITICAL: For PENDING records, clear any local completedCommodities
+        // ✅ CRITICAL: For PENDING records, clear any local completedCommodities/completedBatches
         // Force using ONLY Firebase data (stored in 'commodities' key)
         print(
-            '🔍 PENDING record: Clearing local completedCommodities to use Firebase only');
+            '🔍 PENDING record: Clearing local completedCommodities/completedBatches to use Firebase only');
         widget.record.data!.remove('completedCommodities');
+        widget.record.data!.remove('completedBatches');
         // Rename Firebase 'commodities' to 'completedCommodities' for display compatibility
         if (widget.record.data!.containsKey('commodities')) {
           widget.record.data!['completedCommodities'] =
               widget.record.data!['commodities'];
         }
         print(
-            '   ✅ Cleared local completedCommodities, using Firebase "commodities" only');
+            '   ✅ Cleared local completedCommodities/completedBatches, using Firebase "commodities" only');
       }
 
       final parentFcaName =
@@ -1367,6 +1377,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         ..supportInterventions = List<String>.from(supportInterventions)
         ..farmerName = farmerName
         ..saadIdNo = saadId // ✅ Set SAAD ID for unique identification
+        ..isAddingNewCommodity = true // ✅ Adding commodity to existing farmer
         ..members = existingMembers;
       await Navigator.of(context)
           .pushNamed(AppRoutes.livestockStep2, arguments: w);
@@ -1436,7 +1447,16 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         ..projectTitle = (data['projectTitle'] as String? ?? '').trim()
         ..primaryIntervention = (data['primaryIntervention'] as String?)?.trim()
         ..supportInterventions = List<String>.from(supportInterventions)
-        ..members = existingMembers;
+        ..isAddingNewCommodity =
+            true // ✅ Flag to mark as adding batch to existing group
+        // ✅ CRITICAL: For collectives, NEVER include members - all data is group-level
+        ..members = (widget.record.implType.toLowerCase() == 'collective'
+            ? []
+            : existingMembers)
+        ..completedBatches = List<Map<String, dynamic>>.from(
+          (data['completedBatches'] as List?)?.cast<Map<String, dynamic>>() ??
+              [],
+        ); // ✅ Load existing batches from group record
       await Navigator.of(context)
           .pushNamed(AppRoutes.livestockStep2, arguments: w);
     } else {
