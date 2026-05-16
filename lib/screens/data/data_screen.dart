@@ -745,6 +745,8 @@ class _DataScreenState extends State<DataScreen>
 
         final isModerator = _activeSession?.isModerator ?? false;
         final isAdmin = _activeSession?.isAdmin ?? false;
+        print(
+            '👤 DataScreen - Session: role=${_activeSession?.role}, isModerator=$isModerator, isAdmin=$isAdmin');
 
         return Scaffold(
           backgroundColor: const Color(0xFFF2F2F2),
@@ -971,6 +973,8 @@ class _DataScreenState extends State<DataScreen>
                                         r.isLocal && r.status == 'pending';
                                     final isModeratorOrAdmin = isModerator ||
                                         (_activeSession?.isAdmin ?? false);
+                                    print(
+                                        '🔵 DataScreen record view - isModerator=$isModerator, isAdmin=${_activeSession?.isAdmin}, isModeratorOrAdmin=$isModeratorOrAdmin, status=${r.status}, isLocal=${r.isLocal}');
                                     _handleView(
                                       ctx,
                                       r,

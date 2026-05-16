@@ -72,10 +72,14 @@ class RecordViewModal extends StatelessWidget {
     final screenH = MediaQuery.of(context).size.height;
     final botPad = MediaQuery.of(context).padding.bottom;
     final type = record.productionType.toLowerCase();
-    
+
+    print(
+        '🎯 RecordViewModal: showApprove=$showApprove, approveLocked=$approveLocked, recordStatus=${record.status}');
+
     // ✅ CRITICAL: For PENDING records, use ONLY Firebase data, no local loading
     if (record.status == 'pending') {
-      print('🔍 RecordViewModal: PENDING record detected - using Firebase data ONLY');
+      print(
+          '🔍 RecordViewModal: PENDING record detected - using Firebase data ONLY');
       print('   - Record status: ${record.status}');
       print('   - Record implType: ${record.implType}');
       print('   - Record data keys: ${record.data?.keys.toList()}');
@@ -87,16 +91,19 @@ class RecordViewModal extends StatelessWidget {
         print('      pestOccurrence: ${d['pestOccurrence']}');
         print('      pestDamageArea: ${d['pestDamageArea']}');
         print('   - Checking for local-only fields:');
-        print('      group.json data present: ${d['completedCommodities'] != null}');
-        if (d['completedCommodities'] is List && (d['completedCommodities'] as List).isNotEmpty) {
+        print(
+            '      group.json data present: ${d['completedCommodities'] != null}');
+        if (d['completedCommodities'] is List &&
+            (d['completedCommodities'] as List).isNotEmpty) {
           final firstCommodity = (d['completedCommodities'] as List).first;
           if (firstCommodity is Map<String, dynamic>) {
-            print('      First commodity keys: ${firstCommodity.keys.toList()}');
+            print(
+                '      First commodity keys: ${firstCommodity.keys.toList()}');
           }
         }
       }
     }
-    
+
     final data =
         Map<String, dynamic>.from(record.data ?? const <String, dynamic>{});
 
@@ -237,7 +244,22 @@ class RecordViewModal extends StatelessWidget {
       );
     }
 
-    if (showApprove || approveLocked) {
+    // ✅ For farmers on locked/pending records: Show Edit button (not approve/decline)
+    if (isMemberEditOnly && (approveLocked || showApprove) && showEdit) {
+      return Container(
+        padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + botPad),
+        decoration: deco,
+        child: Row(children: [
+          Expanded(
+              child: _ActionBtn(
+                  label: 'Edit',
+                  color: const Color(0xFF1565C0),
+                  onTap: () => _openEdit(context))),
+        ]),
+      );
+    }
+
+    if ((showApprove || approveLocked) && !isMemberEditOnly) {
       return Container(
         padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + botPad),
         decoration: deco,
@@ -247,7 +269,9 @@ class RecordViewModal extends StatelessWidget {
                   label: 'Approve',
                   color: DAColors.greenMid,
                   locked: approveLocked,
-                  lockMsg: 'Moderators only',
+                  lockMsg: approveLocked
+                      ? 'Moderators and Admins only'
+                      : 'Moderators and Admins only',
                   onTap: showApprove
                       ? (onApprove ?? () => _openApprove(context, true))
                       : null)),
@@ -257,7 +281,9 @@ class RecordViewModal extends StatelessWidget {
                   label: 'Edit',
                   color: const Color(0xFF1565C0),
                   locked: approveLocked,
-                  lockMsg: 'Moderators only',
+                  lockMsg: approveLocked
+                      ? 'Moderators and Admins only'
+                      : 'Moderators and Admins only',
                   onTap: showApprove ? () => _openEdit(context) : null)),
           const SizedBox(width: 8),
           Expanded(
@@ -265,7 +291,9 @@ class RecordViewModal extends StatelessWidget {
                   label: 'Decline',
                   color: Colors.red,
                   locked: approveLocked,
-                  lockMsg: 'Moderators only',
+                  lockMsg: approveLocked
+                      ? 'Moderators and Admins only'
+                      : 'Moderators and Admins only',
                   onTap: showApprove
                       ? (onDecline ?? () => _openApprove(context, false))
                       : null)),
@@ -462,13 +490,11 @@ class _DynamicRecordFields extends StatelessWidget {
           final c = commodities[i];
           print('   - commodity[$i]: ${c['typeOfCrop']} ${c['variety']}');
           // ✅ DEBUG: Check if damage fields exist
-          if (c is Map<String, dynamic>) {
-            print('      - hasPest: ${c['hasPest']}');
-            print('      - pestOccurrence: ${c['pestOccurrence']}');
-            print('      - pestDamageArea: ${c['pestDamageArea']}');
-            print('      - pestDamageHa: ${c['pestDamageHa']}');
-            print('      - pestTreatment: ${c['pestTreatment']}');
-          }
+          print('      - hasPest: ${c['hasPest']}');
+          print('      - pestOccurrence: ${c['pestOccurrence']}');
+          print('      - pestDamageArea: ${c['pestDamageArea']}');
+          print('      - pestDamageHa: ${c['pestDamageHa']}');
+          print('      - pestTreatment: ${c['pestTreatment']}');
         }
       }
       if (commodities.isNotEmpty) {

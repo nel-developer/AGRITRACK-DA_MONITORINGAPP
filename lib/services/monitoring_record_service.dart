@@ -1527,7 +1527,7 @@ class MonitoringRecordService {
             data['membersByFarmerId'] = membersByFarmerId;
           }
         } else {
-          // Fallback for older individual records saved with a root-level commodities collection
+          // ✅ NO MEMBERS = Collective record - fetch root-level commodities
           final rootCommoditiesSnapshot =
               await doc.reference.collection('commodities').get();
           if (rootCommoditiesSnapshot.docs.isNotEmpty) {
@@ -1536,11 +1536,13 @@ class MonitoringRecordService {
               rootCommodities
                   .add({'id': commodityDoc.id, ...commodityDoc.data()});
             }
+            // Map to both 'commodities' and 'completedCommodities' for compatibility
             data['commodities'] = rootCommodities;
+            data['completedCommodities'] = rootCommodities;
           }
         }
       } catch (e) {
-        if (kDebugMode) print('Error fetching members: $e');
+        if (kDebugMode) print('Error fetching members/commodities: $e');
       }
 
       records.add(data);
@@ -1563,21 +1565,18 @@ class MonitoringRecordService {
     try {
       final pendingDocRef =
           _firestore.collection(_pendingCollection).doc(recordId);
-      final pendingDoc = await pendingDocRef.get();
-
-      if (!pendingDoc.exists) {
-        throw Exception('Record not found');
-      }
-
-      // ✅ LEVEL 1: Get project background data
-      final data = pendingDoc.data() ?? {};
-
-      // Create record in approved collection with same FCA document
       final approvedDocRef =
           _firestore.collection(_approvedCollection).doc(recordId);
 
+      // ✅ LEVEL 1: Copy the main FCA/group document
+      final pendingDoc = await pendingDocRef.get();
+      if (!pendingDoc.exists) {
+        throw Exception('Pending record not found');
+      }
+
+      final pendingData = pendingDoc.data() ?? {};
       await approvedDocRef.set({
-        ...data,
+        ...pendingData,
         'approvalStatus': 'approved',
         'approvedBy': _auth.currentUser?.uid,
         'approvedAt': FieldValue.serverTimestamp(),

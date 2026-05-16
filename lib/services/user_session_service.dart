@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'connectivity_service.dart';
 
 enum UserRole {
   profiler,
@@ -88,6 +89,18 @@ class UserSessionService {
     if (session == null) {
       final current = _auth.currentUser;
       if (current != null) {
+        // ✅ Check actual internet before deciding if truly offline
+        final hasInternet =
+            await ConnectivityService.instance.hasInternetConnection();
+
+        if (!hasInternet) {
+          print('🔴 [SignIn] No internet - building offline session');
+          return _buildOfflineSession(current);
+        }
+
+        // Has internet but session lookup failed
+        print(
+            '🟡 [SignIn] Internet OK but session lookup failed - building fallback session');
         return _buildOfflineSession(current);
       }
       throw FirebaseAuthException(
@@ -113,11 +126,39 @@ class UserSessionService {
       _cachedSessionAt = DateTime.now();
       return session;
     } catch (error) {
-      if (_isOfflineError(error) && user != null) {
-        final offline = _buildOfflineSession(user);
-        _cachedSession = offline;
-        _cachedSessionAt = DateTime.now();
-        return offline;
+      // ✅ Only treat as offline if device has NO internet connection
+      // Firebase errors might happen even with internet (auth issues, rules, timeouts)
+      if (_isOfflineError(error)) {
+        final hasInternet =
+            await ConnectivityService.instance.hasInternetConnection();
+
+        if (!hasInternet) {
+          // TRUE offline - no internet at all
+          print('🔴 [Session] No internet connection - entering offline mode');
+          if (user != null) {
+            final offline = _buildOfflineSession(user);
+            _cachedSession = offline;
+            _cachedSessionAt = DateTime.now();
+            return offline;
+          }
+        } else {
+          // Has internet but Firebase failed - might be temporary
+          print(
+              '🟡 [Session] Firebase unavailable but internet exists - using cached/fallback session');
+
+          // Return cached session if available
+          if (_cachedSession != null) {
+            return _cachedSession;
+          }
+
+          // Or build offline session if we have user data
+          if (user != null) {
+            final fallback = _buildOfflineSession(user);
+            _cachedSession = fallback;
+            _cachedSessionAt = DateTime.now();
+            return fallback;
+          }
+        }
       }
 
       _cachedSession = null;
@@ -129,40 +170,59 @@ class UserSessionService {
   Future<UserSession?> _buildApprovedSession(User? user) async {
     if (user == null) return null;
 
+    print('🔵 [Auth] Verifying account: ${user.email} (UID: ${user.uid})');
+
     DocumentSnapshot<Map<String, dynamic>>? doc;
     try {
+      print('🔵 [Auth] Fetching user document from Firestore...');
       doc = await _getUserDoc(user.uid);
+      print('✅ [Auth] User document fetched successfully');
     } catch (error) {
-      // If profile lookup is blocked/unavailable, allow auth user session.
+      // ✅ Check if we actually have internet before deciding to downgrade
+      final hasInternet =
+          await ConnectivityService.instance.hasInternetConnection();
+
+      if (!hasInternet) {
+        // No internet - allow fallback to offline session
+        print(
+            '⚠️ [Session] Firebase unreachable and no internet - using fallback');
+        return _buildOfflineSession(user);
+      }
+
+      // Has internet but can't reach Firebase (might be temp issue)
+      print(
+          '⚠️ [Session] Firebase error but internet available - using fallback: $error');
       return _buildOfflineSession(user);
     }
 
     if (!doc.exists) {
       // Allow valid Firebase Auth users even without profile doc.
+      print('⚠️ [Auth] No user document in Firestore, using offline session');
       return _buildOfflineSession(user);
     }
 
     final data = doc.data() ?? <String, dynamic>{};
+    print('🔵 [Auth] User document data: $data');
+
     final approved = _isApproved(data);
+    print('🔵 [Auth] Account approved: $approved');
+
     if (!approved) {
+      print('❌ [Auth] Account NOT approved - throwing error');
       throw FirebaseAuthException(
         code: 'account-not-approved',
         message: 'Account is pending admin approval.',
       );
     }
 
-    // DEBUG: Log role resolution
     final rawRole = data['role'] as String?;
-    print('🔐 Role Resolution Debug:');
-    print('   - User UID: ${user.uid}');
-    print('   - Raw role from Firestore: "$rawRole"');
-    print('   - Firestore doc keys: ${data.keys.toList()}');
+    print('🔵 [Auth] Raw role from document: "$rawRole"');
 
     final role = _roleFromRaw(rawRole);
-    print('   - Parsed role enum: $role');
+    print('🔵 [Auth] Parsed role: $role');
+
     final resolvedRole = role == UserRole.unknown ? UserRole.profiler : role;
-    print(
-        '   - Resolved role: $resolvedRole (Unknown->Profiler fallback applied: ${role == UserRole.unknown})');
+    print('✅ [Auth] Final resolved role: $resolvedRole');
 
     final fallbackName = user.email?.split('@').first ?? 'User';
     final displayNameFromDoc = _displayNameFromData(data);
@@ -172,6 +232,9 @@ class UserSessionService {
             : ((user.displayName?.trim().isNotEmpty ?? false)
                 ? user.displayName!.trim()
                 : fallbackName);
+
+    print(
+        '✅ [Auth] Login successful! Role: $resolvedRole, Display Name: $resolvedDisplayName');
 
     return UserSession(
       uid: user.uid,

@@ -854,7 +854,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
 
             print('   ✅ Using member-specific data for saadId=$actualSaadId');
             print('   - Member data keys: ${memberData?.keys.toList()}');
-            print('   - Merged data keys: ${mergedData?.keys.toList()}');
+            print('   - Merged data keys: ${mergedData.keys.toList()}');
           } else {
             // Fallback to group data if member not found
             memberData = widget.record.data; // Firebase data only
@@ -864,7 +864,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
           }
 
           print(
-              '   - memberData is now set: ${memberData != null ? "yes (${memberData!.length} keys)" : "NULL"}');
+              '   - memberData is now set: ${memberData != null ? "yes (${memberData.length} keys)" : "NULL"}');
 
           // Extract commodities from pending Firebase data
           commodities = extractCommodities(memberData, widget.record.data);
@@ -1077,7 +1077,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
               (widget.record.data?['trainings'] as List?) ??
               [];
           if (trainings.isNotEmpty) {
-            mergedData?['trainings'] = trainings;
+            mergedData['trainings'] = trainings;
           }
         }
 
@@ -1120,7 +1120,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         print('      - Constructed path: $constructedPath');
         print('      - Final documentPath: ${individualRecord.documentPath}');
         print(
-            '      - completedCommodities in data: ${(mergedData?['completedCommodities'] as List?)?.length ?? 0}');
+            '      - completedCommodities in data: ${(mergedData['completedCommodities'] as List?)?.length ?? 0}');
 
         // ✅ CRITICAL: Use SAAD ID as unique key (not farmer name) to avoid overwrites
         // when multiple farmers have the same name
@@ -1572,19 +1572,10 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
     final session = await UserSessionService.instance.getCurrentSession();
     final isModerator = session?.isModerator ?? false;
     final isAdmin = session?.isAdmin ?? false;
-
-    // DEBUG: Log session and role info
-    print('🔐 Session Debug:');
-    print('   - Session: $session');
-    print('   - Session?.uid: ${session?.uid}');
-    print('   - Session?.role: ${session?.role}');
-    print('   - isModerator: $isModerator');
-    print('   - isAdmin: $isAdmin');
-    print('   - Record status: ${memberRecord.record.status}');
     print(
-        '   - showApprove would be: ${memberRecord.record.status == 'pending' && (isModerator || isAdmin)}');
+        '🔍 _viewMember - Session: role=${session?.role}, isModerator=$isModerator, isAdmin=$isAdmin');
     print(
-        '   - approveLocked would be: ${memberRecord.record.status == 'pending' && !(isModerator || isAdmin)}');
+        '🔍 _viewMember - Session: role=${session?.role}, isModerator=$isModerator, isAdmin=$isAdmin');
 
     if (!mounted) return;
 
@@ -1597,12 +1588,8 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         memberName: memberRecord.member.name,
         isMemberEditOnly:
             true, // Farmers can only edit their own commodity data
-        // Farmers can edit only their own draft/pending records (NOT approved ones)
-        // Moderators can edit approved records
-        showEdit: (memberRecord.record.status == 'unsync' ||
-                memberRecord.record.status == 'pending')
-            ? true
-            : (memberRecord.record.status == 'approved' && isModerator),
+        // ✅ Farmers can edit their own records - pending, approved, or unsync
+        showEdit: true,
         showApprove:
             memberRecord.record.status == 'pending' && (isModerator || isAdmin),
         approveLocked: memberRecord.record.status == 'pending' &&
@@ -1837,7 +1824,7 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                                           record: widget.record,
                                           isGroup: true,
                                           // ✅ For draft/pending: Show sync button (not edit)
-                                          // For approved: Show edit button (moderators only)
+                                          // For approved: Show edit button (moderators and admins)
                                           showEdit: (widget.record.status ==
                                                   'approved' &&
                                               (isModerator || isAdmin)),
@@ -2029,9 +2016,10 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
             ),
 
             // ── Bottom action bar (Pending → Approve/Decline, Approved → Edit) ──
-            // ✅ No sync button - manual sync is triggered explicitly by the user
-            if (widget.record.status == 'pending' ||
-                widget.record.status == 'approved')
+            // ✅ Only show for COLLECTIVE records (not individual/hybrid)
+            if ((widget.record.status == 'pending' ||
+                    widget.record.status == 'approved') &&
+                widget.record.implType.toLowerCase() == 'collective')
               Container(
                 color: Colors.white,
                 padding: EdgeInsets.fromLTRB(hPad, 12, hPad, botPad + 16),
@@ -2053,15 +2041,17 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                         ),
                       ),
                     )),
-                  if (widget.record.status == 'pending' && isModerator) ...[
+                  if (widget.record.status == 'pending' &&
+                      (isModerator || isAdmin)) ...[
                     Expanded(
                         child: _actionBtn(
                       context: context,
                       label: 'Approve',
                       color: DAColors.greenMid,
                       icon: Icons.check_circle_outline_rounded,
-                      onTap: () =>
-                          _updateReviewStatus(widget.record, 'approved'),
+                      onTap: () => _updateReviewStatus(
+                          widget.record, 'approved',
+                          isModerator: isModerator, isAdmin: isAdmin),
                     )),
                     const SizedBox(width: 12),
                     Expanded(
@@ -2070,8 +2060,9 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
                       label: 'Decline',
                       color: Colors.red,
                       icon: Icons.cancel_outlined,
-                      onTap: () =>
-                          _updateReviewStatus(widget.record, 'declined'),
+                      onTap: () => _updateReviewStatus(
+                          widget.record, 'declined',
+                          isModerator: isModerator, isAdmin: isAdmin),
                     )),
                   ],
                 ]),
