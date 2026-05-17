@@ -1473,14 +1473,8 @@ class _MemberRecordsScreenState extends State<MemberRecordsScreen> {
         ..supportInterventions = List<String>.from(supportInterventions)
         ..members = existingMembers;
 
-      // For collective poultry, go to monitoring summary for commodity management
-      if (widget.record.implType.toLowerCase() == 'collective') {
-        await Navigator.of(context)
-            .pushNamed(AppRoutes.poultryMonitoringSummary, arguments: w);
-      } else {
-        await Navigator.of(context)
-            .pushNamed(AppRoutes.poultryStep2, arguments: w);
-      }
+      await Navigator.of(context)
+          .pushNamed(AppRoutes.poultryStep2, arguments: w);
     }
 
     if (!mounted) return;

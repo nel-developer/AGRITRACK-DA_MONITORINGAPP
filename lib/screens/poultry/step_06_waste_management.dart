@@ -25,6 +25,24 @@ class _Step6State extends State<PoultryStep6WasteManagement> {
   @override
   void initState() {
     super.initState();
+
+    // ✅ CRITICAL: For collective viewing, load first commodity's data into wrapper
+    if (w.implementationType?.toLowerCase() == 'collective' &&
+        w.completedCommodities.isNotEmpty) {
+      final firstCommodity =
+          w.completedCommodities.first as Map<String, dynamic>;
+      w.sacksManureProduced =
+          (firstCommodity['sacksManureProduced'] as String? ?? '').trim();
+      w.sacksManureSold =
+          (firstCommodity['sacksManureSold'] as String? ?? '').trim();
+      w.sacksManureUsed =
+          (firstCommodity['sacksManureUsed'] as String? ?? '').trim();
+      w.manurePricePerSack =
+          (firstCommodity['manurePricePerSack'] as String? ?? '').trim();
+      print(
+          '✅ COLLECTIVE POULTRY VIEWING: Loaded waste management data from first commodity');
+    }
+
     _sacksProduced = w.sacksManureProduced;
     _sacksSold = w.sacksManureSold;
     _sacksUsed = w.sacksManureUsed;

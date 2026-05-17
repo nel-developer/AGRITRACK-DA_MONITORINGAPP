@@ -5,6 +5,7 @@ import '../../theme/da_colors.dart';
 import '../../routes/app_routes.dart';
 import '../livestock/livestock_step_wrapper.dart';
 import '../crop/crop_step_wrapper.dart';
+import '../poultry/poultry_step_wrapper.dart';
 
 // ── Implementation type model ─────────────────────────────────────
 class _ImplType {
@@ -104,7 +105,9 @@ class _ImplementationTypeScreenState extends State<ImplementationTypeScreen> {
         final wrapper = CropStepWrapper()..implementationType = key;
         Navigator.of(context).pushNamed(route, arguments: wrapper);
       } else {
-        Navigator.of(context).pushNamed(route);
+        // Poultry: create wrapper, set implementationType
+        final wrapper = PoultryStepWrapper()..implementationType = key;
+        Navigator.of(context).pushNamed(route, arguments: wrapper);
       }
     });
   }

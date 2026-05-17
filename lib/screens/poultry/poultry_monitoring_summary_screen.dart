@@ -465,6 +465,8 @@ class _PoultryMonitoringSummaryScreenState
       ..supportInterventions = List.from(widget.wrapper.supportInterventions)
       ..members = List.from(widget.wrapper.members)
       ..completedCommodities = List.from(widget.wrapper.completedCommodities)
+      ..saadIdNo = widget.wrapper.saadIdNo
+      ..approvedFarmerProfile = Map.from(widget.wrapper.approvedFarmerProfile)
       ..purposeBreeding = widget.wrapper.purposeBreeding
       ..purposeMeat = widget.wrapper.purposeMeat
       ..purposeEgg = widget.wrapper.purposeEgg
@@ -486,6 +488,8 @@ class _PoultryMonitoringSummaryScreenState
       ..projectTitle = widget.wrapper.projectTitle
       ..primaryIntervention = widget.wrapper.primaryIntervention
       ..supportInterventions = List.from(widget.wrapper.supportInterventions)
+      ..saadIdNo = widget.wrapper.saadIdNo
+      ..approvedFarmerProfile = Map.from(widget.wrapper.approvedFarmerProfile)
       ..purposeBreeding = widget.wrapper.purposeBreeding
       ..purposeMeat = widget.wrapper.purposeMeat
       ..purposeEgg = widget.wrapper.purposeEgg
@@ -533,6 +537,8 @@ class _PoultryMonitoringSummaryScreenState
       ..primaryIntervention = widget.wrapper.primaryIntervention
       ..supportInterventions = List.from(widget.wrapper.supportInterventions)
       ..completedCommodities = List.from(widget.wrapper.completedCommodities)
+      ..saadIdNo = widget.wrapper.saadIdNo
+      ..approvedFarmerProfile = Map.from(widget.wrapper.approvedFarmerProfile)
       ..purposeBreeding = widget.wrapper.purposeBreeding
       ..purposeMeat = widget.wrapper.purposeMeat
       ..purposeEgg = widget.wrapper.purposeEgg
@@ -641,6 +647,8 @@ class _PoultryMonitoringSummaryScreenState
       ..primaryIntervention = widget.wrapper.primaryIntervention
       ..supportInterventions = List.from(widget.wrapper.supportInterventions)
       ..completedCommodities = List.from(widget.wrapper.completedCommodities)
+      ..saadIdNo = widget.wrapper.saadIdNo
+      ..approvedFarmerProfile = Map.from(widget.wrapper.approvedFarmerProfile)
       ..purposeBreeding = widget.wrapper.purposeBreeding
       ..purposeMeat = widget.wrapper.purposeMeat
       ..purposeEgg = widget.wrapper.purposeEgg

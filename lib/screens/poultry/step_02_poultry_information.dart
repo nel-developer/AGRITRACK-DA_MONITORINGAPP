@@ -7,6 +7,7 @@ import '../../routes/app_routes.dart';
 import '../../widgets/approved_farmer_picker_field.dart';
 import '../../widgets/crop_form_shell.dart';
 import '../../widgets/crop_field.dart';
+import '../../widgets/crop_dropdown.dart';
 import 'poultry_step_wrapper.dart';
 
 class PoultryStep2PoultryInformation extends StatefulWidget {
@@ -23,7 +24,18 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
   late final TextEditingController _farmerNameController;
 
   String _farmerName = '';
-  String _breed = '';
+  String? _breed;
+
+  static const _breedOptions = [
+    'Chicken',
+    'Duck',
+    'Goose',
+    'Turkey',
+    'Quail',
+    'Guinea Fowl',
+    'Pigeon',
+    'Others',
+  ];
 
   final List<PoultryInputReceived> _inputsReceived = [PoultryInputReceived()];
   final List<PoultryInputPurchased> _inputsPurchased = [
@@ -31,10 +43,6 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
   ];
   String _farmgatePrice = '';
 
-  // Show editable name field when:
-  //   (a) explicitly adding a new farmer (isAddFarmer), or
-  //   (b) fresh individual/hybrid start with no name yet
-  //   (c) collective records should NOT show farmer name field
   bool get _showFarmerName =>
       w.isAddFarmer ||
       ((w.implementationType == 'individual' ||
@@ -45,16 +53,10 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
   void initState() {
     super.initState();
 
-    // CRITICAL: For collectives, always ensure farmerName is cleared
-    if (w.implementationType?.toLowerCase() == 'collective') {
-      w.farmerName = '';
-      _farmerName = '';
-    } else {
-      _farmerName = w.farmerName;
-    }
+    _farmerName = w.farmerName;
 
     _farmerNameController = TextEditingController(text: _farmerName);
-    _breed = w.breed;
+    _breed = w.breed.isEmpty ? null : w.breed;
     _farmgatePrice = w.farmgatePrices.isNotEmpty ? w.farmgatePrices.first : '';
     _inputsReceived
       ..clear()
@@ -157,6 +159,7 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
     }
 
     final rows = <MapEntry<String, String>>[
+      MapEntry('SAAD ID No.', (profile['saadIdNo'] as String? ?? '').trim()),
       MapEntry('Farmer Name', (profile['fullName'] as String? ?? '').trim()),
       MapEntry('Sex', (profile['sex'] as String? ?? '').trim()),
       MapEntry(
@@ -268,10 +271,11 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
       w.approvedFarmerProfile = {};
     }
 
-    w.breed = _breed;
+    w.breed = _breed ?? '';
     w.inputsReceived = _inputsReceived;
     w.inputsPurchased = _inputsPurchased;
     w.farmgatePrices = _farmgatePrice.trim().isEmpty ? [] : [_farmgatePrice];
+    // Note: inputs are now handled in Step 02
     // Members are already updated via ApprovedFarmerPickerField, don't overwrite
     Navigator.of(context).pushNamed(AppRoutes.poultryStep3, arguments: w);
   }
@@ -371,6 +375,11 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
       );
 
   Widget _buildForm() {
+    print('🔍 POULTRY STEP 02 DEBUG:');
+    print('   implementationType: "${w.implementationType}"');
+    print('   _showFarmerName: $_showFarmerName');
+    print('   farmerName: "${w.farmerName}"');
+    print('   isAddFarmer: ${w.isAddFarmer}');
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Poultry Information',
           style: GoogleFonts.poppins(
@@ -381,16 +390,18 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
 
       // ── Name of Farmer / Group Members ────────────────────────────────────────
       if (_showFarmerName) ...[
-        ApprovedFarmerPickerField(
-          selectedLabel: _selectedApprovedFarmerLabel,
-          onSelected: _selectApprovedFarmer,
-          onCleared: _clearApprovedFarmer,
-        ),
-        if (w.approvedFarmerProfile.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _approvedFarmerInfoCard(),
+        if (w.implementationType?.toLowerCase() != 'collective') ...[
+          ApprovedFarmerPickerField(
+            selectedLabel: _selectedApprovedFarmerLabel,
+            onSelected: _selectApprovedFarmer,
+            onCleared: _clearApprovedFarmer,
+          ),
+          if (w.approvedFarmerProfile.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _approvedFarmerInfoCard(),
+          ],
+          const SizedBox(height: 20),
         ],
-        const SizedBox(height: 20),
         _label('Name of Farmer'),
         const SizedBox(height: 8),
         TextFormField(
@@ -432,6 +443,8 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
           ),
         ),
         const SizedBox(height: 20),
+      ] else if (w.implementationType?.toLowerCase() == 'collective') ...[
+        const SizedBox(height: 20),
       ] else if (w.farmerName.isNotEmpty) ...[
         _label('Name of Farmer'),
         const SizedBox(height: 8),
@@ -451,17 +464,18 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
         const SizedBox(height: 20),
       ],
 
-      // ── Breed ─────────────────────────────────────────────────
-      CropField(
+      // ── SECTION 1: Breed ─────────────────────────────────────
+      CropDropdown(
         label: 'Breed',
-        hint: 'Enter',
-        initialValue: _breed,
-        onChanged: (v) => _breed = v,
+        hint: 'Select a poultry breed',
+        value: _breed,
+        items: _breedOptions,
+        onChanged: (v) => setState(() => _breed = v),
       ),
       const SizedBox(height: 20),
 
-      // ── Inputs received ───────────────────────────────────────
-      _label('List of inputs (with quantity) received from the program'),
+      // ── SECTION 2: Inputs received from program ──────────────────────────────────────
+      _label('Inputs received from the program'),
       const SizedBox(height: 10),
       ..._inputsReceived.asMap().entries.map((e) {
         final i = e.key;
@@ -483,7 +497,11 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
               ],
             ]),
             const SizedBox(height: 8),
-            _subLabel('Quantity'),
+            Text('Quantity',
+                style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: DAColors.textDark)),
             const SizedBox(height: 6),
             _rawField(
               hint: 'Enter Quantity',
@@ -495,13 +513,28 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
           ]),
         );
       }),
-      _addBtn('Add Another Input',
-          () => setState(() => _inputsReceived.add(PoultryInputReceived()))),
+      GestureDetector(
+          onTap: () =>
+              setState(() => _inputsReceived.add(PoultryInputReceived())),
+          child: Row(children: [
+            Container(
+                width: 28,
+                height: 28,
+                decoration: const BoxDecoration(
+                    color: DAColors.greenMid, shape: BoxShape.circle),
+                child: const Icon(Icons.add_rounded,
+                    color: Colors.white, size: 18)),
+            const SizedBox(width: 8),
+            Text('Add Another Input',
+                style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: DAColors.greenMid)),
+          ])),
       const SizedBox(height: 20),
 
-      // ── Inputs purchased ──────────────────────────────────────
-      _label(
-          'List of inputs purchased by the FCA\n(indicate quantity and cost)'),
+      // ── SECTION 3: Inputs purchased ──────────────────────────────────────
+      _label('Inputs purchased by the FCA'),
       const SizedBox(height: 10),
       ..._inputsPurchased.asMap().entries.map((e) {
         final i = e.key;
@@ -513,7 +546,7 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
             Row(children: [
               Expanded(
                   child: _rawField(
-                hint: 'Enter Name of the Input',
+                hint: 'Enter Input Name',
                 initial: item.name,
                 onChanged: (v) => item.name = v,
               )),
@@ -528,7 +561,11 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
                   child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _subLabel('Quantity'),
+                  Text('Quantity',
+                      style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: DAColors.textDark)),
                   const SizedBox(height: 6),
                   _rawField(
                     hint: 'Enter Quantity',
@@ -544,7 +581,11 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
                   child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _subLabel('Cost'),
+                  Text('Cost',
+                      style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: DAColors.textDark)),
                   const SizedBox(height: 6),
                   _rawField(
                     hint: 'Enter Cost',
@@ -559,15 +600,31 @@ class _PoultryStep2State extends State<PoultryStep2PoultryInformation> {
           ]),
         );
       }),
-      _addBtn('Add Another Input',
-          () => setState(() => _inputsPurchased.add(PoultryInputPurchased()))),
+      GestureDetector(
+          onTap: () =>
+              setState(() => _inputsPurchased.add(PoultryInputPurchased())),
+          child: Row(children: [
+            Container(
+                width: 28,
+                height: 28,
+                decoration: const BoxDecoration(
+                    color: DAColors.greenMid, shape: BoxShape.circle),
+                child: const Icon(Icons.add_rounded,
+                    color: Colors.white, size: 18)),
+            const SizedBox(width: 8),
+            Text('Add Another Input',
+                style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: DAColors.greenMid)),
+          ])),
       const SizedBox(height: 20),
 
-      // ── Farmgate price ────────────────────────────────────────
-      _label('Farmgate price of each produce'),
+      // ── SECTION 4: Farmgate Price ────────────────────────────────────────
+      _label('Farmgate price per unit'),
       const SizedBox(height: 8),
       _rawField(
-        hint: 'Total Cost',
+        hint: 'Enter Price',
         initial: _farmgatePrice,
         kb: const TextInputType.numberWithOptions(decimal: true),
         fmt: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],

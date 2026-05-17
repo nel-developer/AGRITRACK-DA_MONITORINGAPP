@@ -17,6 +17,11 @@ class PoultryStep4MortalityInformation extends StatefulWidget {
 class _Step4State extends State<PoultryStep4MortalityInformation> {
   PoultryStepWrapper get w => widget.wrapper;
 
+  bool _hasPest = false;
+  bool _hasDisease = false;
+  bool _hasEnvHazard = false;
+  bool _hasHuman = false;
+
   // Pest
   String _pestOccurrence = '';
   String _pestDate = '';
@@ -37,7 +42,7 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
   String _humanDate = '';
   String _humanMortality = '';
 
-  // Shared
+  // Shared (bottom, not in checkboxes)
   String _treatment = '';
   String _attachedReport = '';
   String _totalMortalities = '';
@@ -47,6 +52,52 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
   @override
   void initState() {
     super.initState();
+
+    // ✅ CRITICAL: For collective viewing, load first commodity's data into wrapper
+    if (w.implementationType?.toLowerCase() == 'collective' &&
+        w.completedCommodities.isNotEmpty) {
+      final firstCommodity =
+          w.completedCommodities.first as Map<String, dynamic>;
+      w.hasPest = firstCommodity['hasPest'] as bool? ?? false;
+      w.pestOccurrence =
+          (firstCommodity['pestOccurrence'] as String? ?? '').trim();
+      w.pestDate = (firstCommodity['pestDate'] as String? ?? '').trim();
+      w.pestMortality =
+          (firstCommodity['pestMortality'] as String? ?? '').trim();
+      w.hasDisease = firstCommodity['hasDisease'] as bool? ?? false;
+      w.diseaseOccurrence =
+          (firstCommodity['diseaseOccurrence'] as String? ?? '').trim();
+      w.diseaseDate = (firstCommodity['diseaseDate'] as String? ?? '').trim();
+      w.diseaseMortality =
+          (firstCommodity['diseaseMortality'] as String? ?? '').trim();
+      w.hasEnvHazard = firstCommodity['hasEnvHazard'] as bool? ?? false;
+      w.envOccurrence =
+          (firstCommodity['envOccurrence'] as String? ?? '').trim();
+      w.envDate = (firstCommodity['envDate'] as String? ?? '').trim();
+      w.envMortality = (firstCommodity['envMortality'] as String? ?? '').trim();
+      w.hasHumanInduced = firstCommodity['hasHumanInduced'] as bool? ?? false;
+      w.humanOccurrence =
+          (firstCommodity['humanOccurrence'] as String? ?? '').trim();
+      w.humanDate = (firstCommodity['humanDate'] as String? ?? '').trim();
+      w.humanMortality =
+          (firstCommodity['humanMortality'] as String? ?? '').trim();
+      w.treatment = (firstCommodity['treatment'] as String? ?? '').trim();
+      w.attachedReport =
+          (firstCommodity['attachedReport'] as String? ?? '').trim();
+      w.totalMortalities =
+          (firstCommodity['totalMortalities'] as String? ?? '').trim();
+      w.rejectsCulled =
+          (firstCommodity['rejectsCulled'] as String? ?? '').trim();
+      w.remainingStocks =
+          (firstCommodity['remainingStocks'] as String? ?? '').trim();
+      print(
+          '✅ COLLECTIVE POULTRY VIEWING: Loaded mortality data from first commodity');
+    }
+
+    _hasPest = w.hasPest;
+    _hasDisease = w.hasDisease;
+    _hasEnvHazard = w.hasEnvHazard;
+    _hasHuman = w.hasHumanInduced;
     _pestOccurrence = w.pestOccurrence;
     _pestDate = w.pestDate;
     _pestMortality = w.pestMortality;
@@ -67,27 +118,19 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
   }
 
   void _next() {
-    w.hasPest = _pestOccurrence.isNotEmpty ||
-        _pestDate.isNotEmpty ||
-        _pestMortality.isNotEmpty;
-    w.hasDisease = _diseaseOccurrence.isNotEmpty ||
-        _diseaseDate.isNotEmpty ||
-        _diseaseMortality.isNotEmpty;
-    w.hasEnvHazard = _envOccurrence.isNotEmpty ||
-        _envDate.isNotEmpty ||
-        _envMortality.isNotEmpty;
-    w.hasHumanInduced = _humanOccurrence.isNotEmpty ||
-        _humanDate.isNotEmpty ||
-        _humanMortality.isNotEmpty;
+    w.hasPest = _hasPest;
     w.pestOccurrence = _pestOccurrence;
     w.pestDate = _pestDate;
     w.pestMortality = _pestMortality;
+    w.hasDisease = _hasDisease;
     w.diseaseOccurrence = _diseaseOccurrence;
     w.diseaseDate = _diseaseDate;
     w.diseaseMortality = _diseaseMortality;
+    w.hasEnvHazard = _hasEnvHazard;
     w.envOccurrence = _envOccurrence;
     w.envDate = _envDate;
     w.envMortality = _envMortality;
+    w.hasHumanInduced = _hasHuman;
     w.humanOccurrence = _humanOccurrence;
     w.humanDate = _humanDate;
     w.humanMortality = _humanMortality;
@@ -99,9 +142,49 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
     Navigator.of(context).pushNamed(AppRoutes.poultryStep5, arguments: w);
   }
 
+  Widget _checkRow(String label, bool value, ValueChanged<bool?> cb) => InkWell(
+      onTap: () => cb(!value),
+      child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(children: [
+            AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                    color: value ? DAColors.greenMid : Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                        color:
+                            value ? DAColors.greenMid : const Color(0xFFBBBBBB),
+                        width: 1.5)),
+                child: value
+                    ? const Icon(Icons.check_rounded,
+                        color: Colors.white, size: 16)
+                    : null),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text(label,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: DAColors.textDark))),
+          ])));
+
   Widget _lbl(String t) => Text(t,
       style: GoogleFonts.poppins(
           fontSize: 14, fontWeight: FontWeight.w700, color: DAColors.textDark));
+
+  Widget _lblItalic(String t) => Text(t,
+      style: GoogleFonts.poppins(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          fontStyle: FontStyle.italic,
+          color: DAColors.textDark));
+
+  Widget _sectionTitle(String t) => Text(t,
+      style: GoogleFonts.poppins(
+          fontSize: 15, fontWeight: FontWeight.w700, color: DAColors.textDark));
 
   Widget _field({
     required String hint,
@@ -140,7 +223,11 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
         ),
       );
 
-  Widget _dateField(String value, ValueChanged<String> onChanged) =>
+  Widget _dateField({
+    required String value,
+    required ValueChanged<String> onChanged,
+    String hint = 'Choose Date',
+  }) =>
       GestureDetector(
         onTap: () async {
           final p = await showDatePicker(
@@ -167,7 +254,7 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
               border: Border.all(color: const Color(0xFFDDDDDD), width: 1.5)),
           child: Row(children: [
             Expanded(
-                child: Text(value.isEmpty ? 'Choose Date' : value,
+                child: Text(value.isEmpty ? hint : value,
                     style: GoogleFonts.poppins(
                         fontSize: 14,
                         color: value.isEmpty
@@ -180,7 +267,7 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
       );
 
   Widget _divider() => const Padding(
-      padding: EdgeInsets.symmetric(vertical: 16),
+      padding: EdgeInsets.symmetric(vertical: 4),
       child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5));
 
   @override
@@ -200,126 +287,151 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
               fontSize: 22,
               fontWeight: FontWeight.w800,
               color: DAColors.textDark)),
-      const SizedBox(height: 24),
-
-      // ── Pest ─────────────────────────────────────────────────
-      _lbl('Pest Occurrence'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter Ocurrence',
-          initial: _pestOccurrence,
-          onChanged: (v) => _pestOccurrence = v),
       const SizedBox(height: 16),
-
-      _lbl('Date of Pest/Parasite Occurrence'),
+      Text('Check List',
+          style: GoogleFonts.poppins(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: DAColors.textDark)),
       const SizedBox(height: 8),
-      _dateField(_pestDate, (v) => setState(() => _pestDate = v)),
-      const SizedBox(height: 16),
+      _checkRow('Pest/Parasite Occurrence', _hasPest,
+          (v) => setState(() => _hasPest = v ?? false)),
+      _checkRow('Disease Occurrence', _hasDisease,
+          (v) => setState(() => _hasDisease = v ?? false)),
+      _checkRow('Environmental hazard affecting the poultry production',
+          _hasEnvHazard, (v) => setState(() => _hasEnvHazard = v ?? false)),
+      _checkRow('Human-induced mortality', _hasHuman,
+          (v) => setState(() => _hasHuman = v ?? false)),
+      const SizedBox(height: 20),
 
-      _lbl('Number of poultry mortality (Pest/Parasite)'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _pestMortality,
-          kb: TextInputType.number,
-          fmt: [FilteringTextInputFormatter.digitsOnly],
-          onChanged: (v) => _pestMortality = v),
+      // ── PEST ──
+      if (_hasPest) ...[
+        _sectionTitle('Pest/Parasite Occurrence'),
+        const SizedBox(height: 12),
+        _field(
+            hint: 'Enter Occurrence',
+            initial: _pestOccurrence,
+            onChanged: (v) => _pestOccurrence = v),
+        const SizedBox(height: 14),
+        _lbl('Date of Occurrence'),
+        const SizedBox(height: 8),
+        _dateField(
+            value: _pestDate, onChanged: (v) => setState(() => _pestDate = v)),
+        const SizedBox(height: 14),
+        _lbl('Number of poultry mortality (Pest/Parasite)'),
+        const SizedBox(height: 8),
+        _field(
+            hint: 'Enter',
+            initial: _pestMortality,
+            kb: TextInputType.number,
+            fmt: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (v) => _pestMortality = v),
+        _divider(),
+      ],
 
-      _divider(),
+      // ── DISEASE ──
+      if (_hasDisease) ...[
+        _sectionTitle('Disease Occurrence'),
+        const SizedBox(height: 12),
+        _field(
+            hint: 'Enter Occurrence',
+            initial: _diseaseOccurrence,
+            onChanged: (v) => _diseaseOccurrence = v),
+        const SizedBox(height: 14),
+        _lbl('Date of Occurrence'),
+        const SizedBox(height: 8),
+        _dateField(
+            value: _diseaseDate,
+            onChanged: (v) => setState(() => _diseaseDate = v)),
+        const SizedBox(height: 14),
+        _lbl('Number of poultry mortality (Disease)'),
+        const SizedBox(height: 8),
+        _field(
+            hint: 'Enter',
+            initial: _diseaseMortality,
+            kb: TextInputType.number,
+            fmt: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (v) => _diseaseMortality = v),
+        _divider(),
+      ],
 
-      // ── Disease ───────────────────────────────────────────────
-      _lbl('Disease Occurrence'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _diseaseOccurrence,
-          onChanged: (v) => _diseaseOccurrence = v),
-      const SizedBox(height: 16),
+      // ── ENVIRONMENTAL ──
+      if (_hasEnvHazard) ...[
+        _sectionTitle('Environmental hazard affecting the poultry production'),
+        const SizedBox(height: 12),
+        _field(
+            hint: 'Enter Occurrence',
+            initial: _envOccurrence,
+            onChanged: (v) => _envOccurrence = v),
+        const SizedBox(height: 14),
+        _lbl('Date of occurrence (specific date/calendar period affected)'),
+        const SizedBox(height: 8),
+        _dateField(
+            value: _envDate, onChanged: (v) => setState(() => _envDate = v)),
+        const SizedBox(height: 14),
+        _lbl('Number of poultry mortality (Environmental)'),
+        const SizedBox(height: 8),
+        _field(
+            hint: 'Enter',
+            initial: _envMortality,
+            kb: TextInputType.number,
+            fmt: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (v) => _envMortality = v),
+        _divider(),
+      ],
 
-      _lbl('Date of Disease Occurrence'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter Ocurrence',
-          initial: _diseaseDate,
-          onChanged: (v) => _diseaseDate = v),
-      const SizedBox(height: 16),
+      // ── HUMAN-INDUCED ──
+      if (_hasHuman) ...[
+        _sectionTitle('Human-induced mortality'),
+        const SizedBox(height: 12),
+        _field(
+            hint: 'Enter Occurrence',
+            initial: _humanOccurrence,
+            onChanged: (v) => _humanOccurrence = v),
+        const SizedBox(height: 14),
+        _lbl('Date of occurrence (specific date/calendar period affected)'),
+        const SizedBox(height: 8),
+        _dateField(
+            value: _humanDate,
+            onChanged: (v) => setState(() => _humanDate = v)),
+        const SizedBox(height: 14),
+        _lbl('Number of poultry mortality (Human-induced)'),
+        const SizedBox(height: 8),
+        _field(
+            hint: 'Enter',
+            initial: _humanMortality,
+            kb: TextInputType.number,
+            fmt: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (v) => _humanMortality = v),
+        const SizedBox(height: 8),
+      ],
 
-      _lbl('Number of poultry mortality (Disease)'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _diseaseMortality,
-          kb: TextInputType.number,
-          fmt: [FilteringTextInputFormatter.digitsOnly],
-          onChanged: (v) => _diseaseMortality = v),
+      if (!_hasPest && !_hasDisease && !_hasEnvHazard && !_hasHuman)
+        Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 8),
+            child: Text(
+                'Select at least one mortality type from the checklist above.',
+                style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontStyle: FontStyle.italic,
+                    color: DAColors.textMuted))),
 
-      _divider(),
+      const SizedBox(height: 20),
 
-      // ── Environmental ─────────────────────────────────────────
-      _lbl('Environmental hazard affecting the poultry production'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _envOccurrence,
-          onChanged: (v) => _envOccurrence = v),
-      const SizedBox(height: 16),
-
-      _lbl('Date of occurrence (specific date/calendar period affected)'),
-      const SizedBox(height: 8),
-      _dateField(_envDate, (v) => setState(() => _envDate = v)),
-      const SizedBox(height: 16),
-
-      _lbl('Number of poultry mortality (Environmental)'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _envMortality,
-          kb: TextInputType.number,
-          fmt: [FilteringTextInputFormatter.digitsOnly],
-          onChanged: (v) => _envMortality = v),
-
-      _divider(),
-
-      // ── Human-induced ─────────────────────────────────────────
-      _lbl('Human-induced mortality'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _humanOccurrence,
-          onChanged: (v) => _humanOccurrence = v),
-      const SizedBox(height: 16),
-
-      _lbl(
-          'Date of occurrence (specific date/calendar period affected) (Human-induced)'),
-      const SizedBox(height: 8),
-      _dateField(_humanDate, (v) => setState(() => _humanDate = v)),
-      const SizedBox(height: 16),
-
-      _lbl('Number of poultry mortality (Human-induced)'),
-      const SizedBox(height: 8),
-      _field(
-          hint: 'Enter',
-          initial: _humanMortality,
-          kb: TextInputType.number,
-          fmt: [FilteringTextInputFormatter.digitsOnly],
-          onChanged: (v) => _humanMortality = v),
-
-      _divider(),
-
-      // ── Shared bottom fields ──────────────────────────────────
-      _lbl('Treatment provided/ Action Taken'),
+      // ── TREATMENT & SUMMARY (NOT IN CHECKBOXES - ALWAYS VISIBLE) ────────────────
+      _lbl('Treatment provided / Action Taken'),
       const SizedBox(height: 8),
       _field(
           hint: 'Enter', initial: _treatment, onChanged: (v) => _treatment = v),
-      const SizedBox(height: 16),
+      const SizedBox(height: 14),
 
-      _lbl('(Attached mortality/monitoring/incident report)'),
+      _lblItalic('(Attached mortality/monitoring/incident report)'),
       const SizedBox(height: 8),
       _field(
           hint: 'Enter',
           initial: _attachedReport,
           onChanged: (v) => _attachedReport = v),
-      const SizedBox(height: 16),
+      const SizedBox(height: 14),
 
       _lbl('Total number of mortalities'),
       const SizedBox(height: 8),
@@ -329,7 +441,7 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
           kb: TextInputType.number,
           fmt: [FilteringTextInputFormatter.digitsOnly],
           onChanged: (v) => _totalMortalities = v),
-      const SizedBox(height: 16),
+      const SizedBox(height: 14),
 
       _lbl('Number of rejects/culled (indicate number of culled sold)'),
       const SizedBox(height: 8),
@@ -337,7 +449,7 @@ class _Step4State extends State<PoultryStep4MortalityInformation> {
           hint: 'Enter',
           initial: _rejectsCulled,
           onChanged: (v) => _rejectsCulled = v),
-      const SizedBox(height: 16),
+      const SizedBox(height: 14),
 
       _lbl('Number of remaining stocks (as of writing)'),
       const SizedBox(height: 8),

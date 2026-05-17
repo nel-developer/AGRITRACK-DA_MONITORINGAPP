@@ -4,9 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../theme/da_colors.dart';
 import '../../widgets/crop_form_shell.dart';
-import '../../services/pending_draft_service.dart';
 import '../../services/photo_capture_location_service.dart';
 import 'poultry_step_wrapper.dart';
 
@@ -32,11 +32,36 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
   bool _isSaving = false;
 
   @override
-  void dispose() {
-    if (!_didSaveDraft && _photoPath.isNotEmpty) {
-      _deletePhotoSilently(_photoPath);
+  void initState() {
+    super.initState();
+
+    print('📁 Step07 initState: wrapper arrived with:');
+    print('   farmerName: "${w.farmerName}"');
+    print('   saadIdNo: "${w.saadIdNo}"');
+    print('   fcaName: "${w.fcaName}"');
+    print('   implementationType: ${w.implementationType}');
+    print('   isAddFarmer: ${w.isAddFarmer}');
+
+    if (w.trainings.isNotEmpty) {
+      bool hasActualData = w.trainings.any((training) =>
+          training.name.trim().isNotEmpty ||
+          training.date.trim().isNotEmpty ||
+          training.attendees.trim().isNotEmpty);
+      if (hasActualData) {
+        _trainings.clear();
+        _trainings.addAll(w.trainings);
+      } else {
+        _trainings.clear();
+        _trainings.add(TrainingEntry());
+      }
+    } else {
+      _trainings.clear();
+      _trainings.add(TrainingEntry());
     }
-    super.dispose();
+
+    if (w.farmPhoto.isNotEmpty) {
+      _photoPath = w.farmPhoto;
+    }
   }
 
   Future<void> _deletePhotoSilently(String path) async {
@@ -121,10 +146,6 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
     w.trainings = List<TrainingEntry>.from(_trainings);
     w.farmPhoto = _photoPath;
 
-    // Persist current commodity data before saving
-    _persistCurrentPoultryCommodity();
-
-    // Save locally first. Firebase is only used during manual sync.
     if (mounted) {
       showDialog(
         context: context,
@@ -145,99 +166,14 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
       );
     }
 
+    _persistCurrentPoultryCommodity();
+
     try {
       var jsonData = w.toJson();
 
-      // ✅ CRITICAL: Build membersByFarmerId map for ALL record types
-      // (both group and individual with single farmer)
-      final members = jsonData['members'] as List? ?? [];
-      final commodities = jsonData['completedCommodities'] as List? ?? [];
-      final farmerName = (jsonData['farmerName'] as String? ?? '').trim();
-      final saadIdNo = (jsonData['saadIdNo'] as String? ?? '').trim();
+      // ALL types use folder structure
+      await _savePoultryRecordByFolders(jsonData, 'poultry');
 
-      Map<String, dynamic> membersByFarmerId = {};
-
-      // Case 1: Group record with multiple farmers
-      if (members.isNotEmpty) {
-        for (final member in members) {
-          if (member is Map<String, dynamic>) {
-            final memberName = (member['name'] as String? ??
-                    member['farmerName'] as String? ??
-                    '')
-                .trim();
-            final memberSaadId = (member['saadIdNo'] as String? ?? '').trim();
-            final memberId =
-                memberSaadId.isNotEmpty ? memberSaadId : memberName;
-
-            if (memberId.isNotEmpty) {
-              // Filter commodities for this farmer
-              final farmerCommodities = commodities.where((comm) {
-                if (comm is! Map<String, dynamic>) return false;
-                final commName = (comm['farmerName'] as String? ?? '').trim();
-                final commSaadId = (comm['saadIdNo'] as String? ?? '').trim();
-                return commName == memberName || commSaadId == memberSaadId;
-              }).toList();
-
-              membersByFarmerId[memberId] = {
-                'name': memberName,
-                'farmerName': memberName,
-                'saadIdNo': memberSaadId,
-                'completedCommodities': farmerCommodities,
-              };
-            }
-          }
-        }
-        print(
-            '✅ Built membersByFarmerId for group: ${membersByFarmerId.keys.toList()}');
-      }
-      // Case 2: Collective record with no farmers, store data directly at root level
-      else if (w.implementationType?.toLowerCase() == 'collective' &&
-          commodities.isNotEmpty) {
-        // For collective records, store commodities directly at root level, not in membersByFarmerId
-        jsonData['completedCommodities'] = commodities;
-        jsonData['trainings'] =
-            w.trainings; // Store trainings at root level too
-        print(
-            '✅ Stored collective data directly at root level: ${commodities.length} commodities, ${w.trainings.length} trainings');
-      }
-      // Case 3: Individual record with single farmer
-      // ✅ CRITICAL: Include individual farmers even if they have NO commodities yet
-      // In-progress individuals must still sync to preserve their data
-      else if (farmerName.isNotEmpty) {
-        final memberId = saadIdNo.isNotEmpty ? saadIdNo : farmerName;
-        membersByFarmerId[memberId] = {
-          'name': farmerName,
-          'farmerName': farmerName,
-          'saadIdNo': saadIdNo,
-          'completedCommodities': commodities,
-          'trainings':
-              w.trainings, // ✅ Individual farmers have their own trainings
-        };
-        print('✅ Built membersByFarmerId for individual: $memberId');
-      }
-
-      if (membersByFarmerId.isNotEmpty) {
-        jsonData['membersByFarmerId'] = membersByFarmerId;
-        // Only clear root level commodities for non-collective records
-        if (w.implementationType?.toLowerCase() != 'collective') {
-          jsonData['completedCommodities'] = [];
-        }
-      }
-
-      print('🔥 Poultry - About to call saveDraft:');
-      print('   implementationType: ${w.implementationType}');
-      print('   members: ${jsonData['members']}');
-      print(
-          '   membersByFarmerId: ${(jsonData['membersByFarmerId'] as Map?)?.keys.toList()}');
-      print('   farmerName: ${jsonData['farmerName']}');
-      print('   fcaName: ${jsonData['fcaName']}');
-
-      await PendingDraftService.instance.saveDraft(
-        productionType: 'poultry',
-        implementationType: w.implementationType ?? 'collective',
-        data: jsonData,
-        source: 'unsync',
-      );
       _didSaveDraft = true;
 
       if (!mounted) return;
@@ -246,7 +182,7 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Saved locally as unsync.',
+            'Saved locally.',
             style: GoogleFonts.poppins(fontSize: 13),
           ),
           backgroundColor: DAColors.greenMid,
@@ -259,6 +195,7 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/home', (r) => false);
     } catch (e) {
+      print('❌ ERROR: Failed to save - $e');
       if (!mounted) return;
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -343,6 +280,10 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
       'feedPerDay': w.feedPerDay,
       'waterSources': w.waterSources,
       'sacksManureProduced': w.sacksManureProduced,
+      'sacksManureSold': w.sacksManureSold,
+      'sacksManureUsed': w.sacksManureUsed,
+      'manurePricePerSack': w.manurePricePerSack,
+      'farmPhoto': w.farmPhoto,
     };
 
     final currentFarmerName = w.farmerName.trim();
@@ -350,13 +291,8 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
     final hasCurrentFarmer =
         currentFarmerName.isNotEmpty || currentSaadId.isNotEmpty;
 
-    // ✅ CRITICAL: Handle collective records differently - store commodities directly
     final candidates = <Map<String, dynamic>>[];
-    if (w.implementationType?.toLowerCase() == 'collective') {
-      // For collective records, store commodity directly without farmer info
-      candidates.add(commodity);
-    } else if (hasCurrentFarmer) {
-      // For individual/hybrid records, add farmer info
+    if (hasCurrentFarmer) {
       candidates.add({
         ...commodity,
         'farmerName': currentFarmerName,
@@ -364,8 +300,6 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
             currentSaadId.isNotEmpty ? currentSaadId : currentFarmerName,
       });
     }
-    // NOTE: Removed the "else if (w.members.isNotEmpty)" branch
-    // Each farmer adds their own commodities, not commodities for all group members
 
     for (final candidate in candidates) {
       final candidateJson = jsonEncode(candidate);
@@ -376,6 +310,466 @@ class _PoultryStep7State extends State<PoultryStep7Trainings> {
         w.completedCommodities.add(candidate);
       }
     }
+  }
+
+  Future<void> _savePoultryRecordByFolders(
+    Map<String, dynamic> jsonData,
+    String productionType,
+  ) async {
+    print('\n📁 SAVING: Poultry record...');
+    final implementationType =
+        (jsonData['implementationType'] as String? ?? '').toLowerCase();
+    final isCollective = implementationType == 'collective';
+    final isHybrid = implementationType == 'hybrid';
+    final isIndividual = implementationType == 'individual';
+    final farmerName = (jsonData['farmerName'] as String? ?? '').trim();
+    final saadIdNo = (jsonData['saadIdNo'] as String? ?? '').trim();
+    final fcaName = (jsonData['fcaName'] as String? ?? '').trim();
+    final members = jsonData['members'] as List? ?? [];
+
+    print(
+        '   Type: ${isCollective ? 'COLLECTIVE' : isHybrid ? 'HYBRID' : 'INDIVIDUAL'} | Farmer: $farmerName | Group: $fcaName');
+
+    Directory? appDocDir;
+    try {
+      const platform = MethodChannel('com.example.da_monitoring_app/storage');
+      final String result = await platform.invokeMethod('getExternalFilesDir');
+      appDocDir = Directory(result);
+    } catch (e) {
+      appDocDir = await getApplicationDocumentsDirectory();
+    }
+
+    final monitoringDir =
+        Directory('${appDocDir.path}/monitoring_records/$productionType');
+
+    if (!await monitoringDir.exists()) {
+      await monitoringDir.create(recursive: true);
+    }
+
+    if (isCollective) {
+      if (fcaName.isEmpty) {
+        throw Exception('FCA name is required for collective records');
+      }
+
+      final sanitizedName = _sanitizeFolderName(fcaName);
+      final mainDir = Directory('${monitoringDir.path}/$sanitizedName');
+
+      if (!await mainDir.exists()) {
+        await mainDir.create(recursive: true);
+      }
+
+      final groupJsonFile = File('${mainDir.path}/group.json');
+      Map<String, dynamic> groupData = {};
+
+      if (await groupJsonFile.exists()) {
+        try {
+          final existingContent = await groupJsonFile.readAsString();
+          groupData = jsonDecode(existingContent) as Map<String, dynamic>;
+        } catch (e) {
+          print('⚠️ WARNING: Could not read existing group.json: $e');
+          groupData = {};
+        }
+      }
+
+      // Preserve existing completedCommodities and append new one
+      final existingCommodities = (groupData['completedCommodities'] as List?)
+              ?.cast<Map<String, dynamic>>() ??
+          [];
+
+      // Extract current commodity fields directly from jsonData
+      final currentCommodity = <String, dynamic>{};
+      final commodityFields = [
+        'breed',
+        'inputsReceived',
+        'inputsPurchased',
+        'farmgatePrices',
+        'stocksReceived',
+        'dateReceived',
+        'ageUponReceipt',
+        'avgWeightUponReceipt',
+        'totalProductiveCycle',
+        'housingType',
+        'landOwnership',
+        'landOwnershipOther',
+        'usufruct',
+        'maleToFemaleRatio',
+        'eggsProduced',
+        'fertilEggs',
+        'eggsIncubated',
+        'eggsHatched',
+        'hatchingRate',
+        'mortalitiesAfterHatch',
+        'chicksSold',
+        'eggsSold',
+        'harvestedBirds',
+        'totalWeightHarvested',
+        'avgDailyGain',
+        'harvestRecovery',
+        'avgLiveWeight',
+        'feedConversionRatio',
+        'avgAgeHarvested',
+        'broilerPerformanceIndex',
+        'rangingAge',
+        'totalEggsHarvested',
+        'avgHarvestRate',
+        'weeklyHenDayEggProduction',
+        'weeklyHDEPFile',
+        'daysUnderMolting',
+        'hasPest',
+        'pestOccurrence',
+        'pestDate',
+        'pestMortality',
+        'hasDisease',
+        'diseaseOccurrence',
+        'diseaseDate',
+        'diseaseMortality',
+        'hasEnvHazard',
+        'envOccurrence',
+        'envDate',
+        'envMortality',
+        'hasHumanInduced',
+        'humanOccurrence',
+        'humanDate',
+        'humanMortality',
+        'treatment',
+        'attachedReport',
+        'totalMortalities',
+        'rejectsCulled',
+        'remainingStocks',
+        'feedType',
+        'totalFeedConsumed',
+        'feedPerDay',
+        'waterSources',
+        'sacksManureProduced',
+        'sacksManureSold',
+        'sacksManureUsed',
+        'manurePricePerSack',
+        'farmPhoto',
+      ];
+
+      for (final field in commodityFields) {
+        if (jsonData.containsKey(field)) {
+          currentCommodity[field] = jsonData[field];
+        }
+      }
+
+      // Add GPS to commodity
+      if (_photoLatitude != null && _photoLongitude != null) {
+        currentCommodity['photoGPS'] = {
+          'latitude': _photoLatitude!,
+          'longitude': _photoLongitude!,
+          'accuracy': _photoAccuracy ?? 0.0,
+        };
+      }
+
+      existingCommodities.add(currentCommodity);
+
+      // Merge trainings
+      final mergedTrainings =
+          (groupData['trainings'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final newTrainings =
+          (jsonData['trainings'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      mergedTrainings.addAll(newTrainings);
+
+      groupData['implementationType'] = jsonData['implementationType'];
+      groupData['reportingPeriod'] = jsonData['reportingPeriod'];
+      groupData['fcaName'] = fcaName;
+      groupData['region'] = jsonData['region'];
+      groupData['province'] = jsonData['province'];
+      groupData['municipality'] = jsonData['municipality'];
+      groupData['barangay'] = jsonData['barangay'];
+      groupData['projectTitle'] = jsonData['projectTitle'];
+      groupData['primaryIntervention'] = jsonData['primaryIntervention'];
+      groupData['supportInterventions'] = jsonData['supportInterventions'];
+      groupData['completedCommodities'] = existingCommodities;
+      groupData['trainings'] = mergedTrainings;
+
+      await groupJsonFile.writeAsString(jsonEncode(groupData));
+      print('✅ Saved group.json - ${existingCommodities.length} commodities');
+
+      // Save photo
+      if (_photoPath.isNotEmpty) {
+        final extension = _photoPath.split('.').last;
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final photoDestPath = '${mainDir.path}/picture_$timestamp.$extension';
+        await _savePhotoWithLocation(_photoPath, photoDestPath);
+      }
+    } else if (isHybrid || isIndividual) {
+      if (farmerName.isEmpty) {
+        throw Exception(
+            'Farmer name is required for individual/hybrid records');
+      }
+      if (isHybrid && fcaName.isEmpty) {
+        throw Exception('FCA name is required for hybrid records');
+      }
+
+      final groupName =
+          isHybrid ? fcaName : (fcaName.isNotEmpty ? fcaName : farmerName);
+      final sanitizedGroupName = _sanitizeFolderName(groupName);
+      final groupDir = Directory('${monitoringDir.path}/$sanitizedGroupName');
+
+      if (!await groupDir.exists()) {
+        await groupDir.create(recursive: true);
+      }
+
+      // Save group.json with Step 01 data only
+      final groupJsonFile = File('${groupDir.path}/group.json');
+      if (!await groupJsonFile.exists()) {
+        final groupData = <String, dynamic>{
+          'implementationType': jsonData['implementationType'],
+          'reportingPeriod': jsonData['reportingPeriod'],
+          'fcaName': fcaName,
+          'region': jsonData['region'],
+          'province': jsonData['province'],
+          'municipality': jsonData['municipality'],
+          'barangay': jsonData['barangay'],
+          'projectTitle': jsonData['projectTitle'],
+          'primaryIntervention': jsonData['primaryIntervention'],
+          'supportInterventions': jsonData['supportInterventions'],
+          'members': isHybrid ? members : <Map<String, dynamic>>[],
+          'createdAt': DateTime.now().toIso8601String(),
+        };
+        await groupJsonFile.writeAsString(jsonEncode(groupData));
+      }
+
+      // Save farmer's data in their own folder
+      if (farmerName.isNotEmpty) {
+        final sanitizedFarmerName = _sanitizeFolderName(farmerName);
+        final sanitizedSaadId =
+            saadIdNo.isEmpty ? '' : '_${_sanitizeFolderName(saadIdNo)}';
+        final farmerFolderName = '$sanitizedFarmerName$sanitizedSaadId';
+
+        final farmerDir = Directory('${groupDir.path}/$farmerFolderName');
+        if (!await farmerDir.exists()) {
+          await farmerDir.create(recursive: true);
+        }
+
+        final farmerData = _buildFarmerData(jsonData, farmerName, saadIdNo);
+
+        // Add GPS to first commodity
+        if (_photoLatitude != null && _photoLongitude != null) {
+          final commodities = (farmerData['completedCommodities'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              [];
+          if (commodities.isNotEmpty) {
+            commodities[0]['photoGPS'] = {
+              'latitude': _photoLatitude!,
+              'longitude': _photoLongitude!,
+              'accuracy': _photoAccuracy ?? 0.0,
+            };
+          }
+        }
+
+        final farmerJsonFile = File('${farmerDir.path}/data.json');
+
+        if (await farmerJsonFile.exists()) {
+          try {
+            final existingContent = await farmerJsonFile.readAsString();
+            final existingData =
+                jsonDecode(existingContent) as Map<String, dynamic>;
+
+            final existingCommodities =
+                (existingData['completedCommodities'] as List?)
+                        ?.cast<Map<String, dynamic>>() ??
+                    [];
+
+            final newCommodity = w.completedCommodities.isNotEmpty
+                ? w.completedCommodities.last
+                : <String, dynamic>{};
+
+            if (newCommodity.isNotEmpty) {
+              if (_photoLatitude != null && _photoLongitude != null) {
+                newCommodity['photoGPS'] = {
+                  'latitude': _photoLatitude!,
+                  'longitude': _photoLongitude!,
+                  'accuracy': _photoAccuracy ?? 0.0,
+                };
+              }
+              existingCommodities.add(newCommodity);
+            }
+
+            final existingTrainings = (existingData['trainings'] as List?)
+                    ?.cast<Map<String, dynamic>>() ??
+                [];
+            final mergedTrainings = [
+              ...existingTrainings,
+              ...w.trainings.map((item) => item.toJson()),
+            ];
+
+            final mergedData = Map<String, dynamic>.from(existingData);
+            mergedData['completedCommodities'] = existingCommodities;
+            mergedData['trainings'] = mergedTrainings;
+
+            await farmerJsonFile.writeAsString(jsonEncode(mergedData));
+          } catch (e) {
+            print('⚠️ Could not merge: $e, overwriting');
+            await farmerJsonFile.writeAsString(jsonEncode(farmerData));
+          }
+        } else {
+          await farmerJsonFile.writeAsString(jsonEncode(farmerData));
+        }
+
+        // Save photo in farmer folder
+        if (_photoPath.isNotEmpty) {
+          final breed = (jsonData['breed'] as String? ?? '').trim();
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final photoDestPath = '${farmerDir.path}/${breed}_$timestamp.jpg';
+          await _savePhotoWithLocation(_photoPath, photoDestPath);
+        }
+
+        // Update group.json members list
+        try {
+          if (await groupJsonFile.exists()) {
+            final groupJsonContent =
+                jsonDecode(await groupJsonFile.readAsString())
+                    as Map<String, dynamic>;
+            final existingMembers = (groupJsonContent['members'] as List?)
+                    ?.cast<Map<String, dynamic>>() ??
+                [];
+
+            final farmerExists = existingMembers.any((m) =>
+                (m['name']?.toString().trim().toLowerCase() ==
+                    farmerName.trim().toLowerCase()) &&
+                (m['saadIdNo']?.toString().trim() == saadIdNo.trim()));
+
+            if (!farmerExists) {
+              existingMembers.add({
+                'name': farmerName.trim(),
+                'saadIdNo': saadIdNo.trim(),
+              });
+              groupJsonContent['members'] = existingMembers;
+              await groupJsonFile.writeAsString(jsonEncode(groupJsonContent));
+            }
+          }
+        } catch (e) {
+          print('⚠️ Could not update members list: $e');
+        }
+      }
+    } else {
+      throw Exception('Unknown implementation type: $implementationType');
+    }
+
+    print('✅ Poultry record saved to folder structure');
+  }
+
+  Map<String, dynamic> _buildFarmerData(
+    Map<String, dynamic> jsonData,
+    String farmerName,
+    String saadIdNo,
+  ) {
+    return <String, dynamic>{
+      'name': farmerName,
+      'farmerName': farmerName,
+      'saadIdNo': saadIdNo,
+      'completedCommodities': w.completedCommodities,
+      'trainings': w.trainings.map((item) => item.toJson()).toList(),
+      'breed': jsonData['breed'],
+      'inputsReceived': jsonData['inputsReceived'],
+      'inputsPurchased': jsonData['inputsPurchased'],
+      'farmgatePrices': jsonData['farmgatePrices'],
+      'stocksReceived': jsonData['stocksReceived'],
+      'dateReceived': jsonData['dateReceived'],
+      'ageUponReceipt': jsonData['ageUponReceipt'],
+      'avgWeightUponReceipt': jsonData['avgWeightUponReceipt'],
+      'totalProductiveCycle': jsonData['totalProductiveCycle'],
+      'housingType': jsonData['housingType'],
+      'landOwnership': jsonData['landOwnership'],
+      'landOwnershipOther': jsonData['landOwnershipOther'],
+      'usufruct': jsonData['usufruct'],
+      'maleToFemaleRatio': jsonData['maleToFemaleRatio'],
+      'eggsProduced': jsonData['eggsProduced'],
+      'fertilEggs': jsonData['fertilEggs'],
+      'eggsIncubated': jsonData['eggsIncubated'],
+      'eggsHatched': jsonData['eggsHatched'],
+      'hatchingRate': jsonData['hatchingRate'],
+      'mortalitiesAfterHatch': jsonData['mortalitiesAfterHatch'],
+      'chicksSold': jsonData['chicksSold'],
+      'eggsSold': jsonData['eggsSold'],
+      'harvestedBirds': jsonData['harvestedBirds'],
+      'totalWeightHarvested': jsonData['totalWeightHarvested'],
+      'avgDailyGain': jsonData['avgDailyGain'],
+      'harvestRecovery': jsonData['harvestRecovery'],
+      'avgLiveWeight': jsonData['avgLiveWeight'],
+      'feedConversionRatio': jsonData['feedConversionRatio'],
+      'avgAgeHarvested': jsonData['avgAgeHarvested'],
+      'broilerPerformanceIndex': jsonData['broilerPerformanceIndex'],
+      'rangingAge': jsonData['rangingAge'],
+      'totalEggsHarvested': jsonData['totalEggsHarvested'],
+      'avgHarvestRate': jsonData['avgHarvestRate'],
+      'weeklyHenDayEggProduction': jsonData['weeklyHenDayEggProduction'],
+      'weeklyHDEPFile': jsonData['weeklyHDEPFile'],
+      'daysUnderMolting': jsonData['daysUnderMolting'],
+      'hasPest': jsonData['hasPest'],
+      'pestOccurrence': jsonData['pestOccurrence'],
+      'pestDate': jsonData['pestDate'],
+      'pestMortality': jsonData['pestMortality'],
+      'hasDisease': jsonData['hasDisease'],
+      'diseaseOccurrence': jsonData['diseaseOccurrence'],
+      'diseaseDate': jsonData['diseaseDate'],
+      'diseaseMortality': jsonData['diseaseMortality'],
+      'hasEnvHazard': jsonData['hasEnvHazard'],
+      'envOccurrence': jsonData['envOccurrence'],
+      'envDate': jsonData['envDate'],
+      'envMortality': jsonData['envMortality'],
+      'hasHumanInduced': jsonData['hasHumanInduced'],
+      'humanOccurrence': jsonData['humanOccurrence'],
+      'humanDate': jsonData['humanDate'],
+      'humanMortality': jsonData['humanMortality'],
+      'treatment': jsonData['treatment'],
+      'attachedReport': jsonData['attachedReport'],
+      'totalMortalities': jsonData['totalMortalities'],
+      'rejectsCulled': jsonData['rejectsCulled'],
+      'remainingStocks': jsonData['remainingStocks'],
+      'feedType': jsonData['feedType'],
+      'totalFeedConsumed': jsonData['totalFeedConsumed'],
+      'feedPerDay': jsonData['feedPerDay'],
+      'waterSources': jsonData['waterSources'],
+      'sacksManureProduced': jsonData['sacksManureProduced'],
+      'sacksManureSold': jsonData['sacksManureSold'],
+      'sacksManureUsed': jsonData['sacksManureUsed'],
+      'manurePricePerSack': jsonData['manurePricePerSack'],
+      'farmPhoto': jsonData['farmPhoto'],
+    };
+  }
+
+  Future<void> _savePhotoWithLocation(
+      String sourcePhotoPath, String destPhotoPath) async {
+    if (sourcePhotoPath.isEmpty) return;
+
+    final photoFile = File(sourcePhotoPath);
+    if (!await photoFile.exists()) return;
+
+    try {
+      await photoFile.copy(destPhotoPath);
+      print('✅ Photo copied to: $destPhotoPath');
+
+      if (_photoLatitude != null && _photoLongitude != null) {
+        try {
+          const platform = MethodChannel('com.example.da_monitoring_app/exif');
+          await platform.invokeMethod('setExifGPS', {
+            'imagePath': destPhotoPath,
+            'latitude': _photoLatitude!,
+            'longitude': _photoLongitude!,
+            'accuracy': _photoAccuracy ?? 0.0,
+          });
+          print('✅ GPS metadata added: $_photoLatitude, $_photoLongitude');
+        } catch (e) {
+          print('❌ Failed to add GPS metadata: $e');
+        }
+      }
+    } catch (e) {
+      print('❌ Error saving photo: $e');
+      rethrow;
+    }
+  }
+
+  String _sanitizeFolderName(String name) {
+    return name
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll('__', '_')
+        .replaceFirst(RegExp(r'^_+'), '')
+        .replaceFirst(RegExp(r'_+$'), '');
   }
 
   Future<void> _handleBack() async {

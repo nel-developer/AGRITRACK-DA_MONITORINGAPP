@@ -45,6 +45,22 @@ class _Step5State extends State<PoultryStep5FeedingWater> {
   @override
   void initState() {
     super.initState();
+
+    // ✅ CRITICAL: For collective viewing, load first commodity's data into wrapper
+    if (w.implementationType?.toLowerCase() == 'collective' &&
+        w.completedCommodities.isNotEmpty) {
+      final firstCommodity =
+          w.completedCommodities.first as Map<String, dynamic>;
+      w.feedType = (firstCommodity['feedType'] as String? ?? '').trim();
+      w.totalFeedConsumed =
+          (firstCommodity['totalFeedConsumed'] as String? ?? '').trim();
+      w.feedPerDay = (firstCommodity['feedPerDay'] as String? ?? '').trim();
+      final waterSourcesList = firstCommodity['waterSources'] as List? ?? [];
+      w.waterSources = waterSourcesList.cast<String>();
+      print(
+          '✅ COLLECTIVE POULTRY VIEWING: Loaded feeding/water data from first commodity');
+    }
+
     _feedType = w.feedType.isEmpty ? null : w.feedType;
     _totalFeedConsumed = w.totalFeedConsumed;
     _feedPerDay = w.feedPerDay;

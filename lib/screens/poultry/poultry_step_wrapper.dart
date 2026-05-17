@@ -156,8 +156,11 @@ class PoultryStepWrapper {
   String manurePricePerSack = '';
 
   // ── Step 7: Trainings Attended (LAST STEP) ───────────────────
-  List<TrainingEntry> trainings = [TrainingEntry()];
+  List<TrainingEntry> trainings = [];
+
+  // ── Photo & GPS (nested inside each completed commodity) ─────
   String farmPhoto = '';
+  Map<String, dynamic>? photoGPS;
 
   Map<String, dynamic> toJson() {
     return {
@@ -247,7 +250,6 @@ class PoultryStepWrapper {
       'sacksManureUsed': sacksManureUsed,
       'manurePricePerSack': manurePricePerSack,
       'trainings': trainings.map((item) => item.toJson()).toList(),
-      'farmPhoto': farmPhoto,
     };
   }
 

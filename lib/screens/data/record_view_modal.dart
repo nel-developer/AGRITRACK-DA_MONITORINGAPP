@@ -1007,6 +1007,30 @@ class _DynamicRecordFields extends StatelessWidget {
             if (month.isNotEmpty) month
           ].join(' • ');
         }).join('\n');
+      case 'farmgatePrices':
+        final prices = (source['farmgatePrices'] as List?) ?? const [];
+        if (prices.isEmpty) return '';
+        return prices.map((p) => '₱${p.toString()}').join(', ');
+      case 'waterSources':
+        final sources = (source['waterSources'] as List?) ?? const [];
+        if (sources.isEmpty) return '';
+        return sources.join(', ');
+      case 'hasPest':
+        final v = source['hasPest'];
+        if (v == null) return '';
+        return (v == true || v == 'true') ? 'Yes' : 'No';
+      case 'hasDisease':
+        final v = source['hasDisease'];
+        if (v == null) return '';
+        return (v == true || v == 'true') ? 'Yes' : 'No';
+      case 'hasEnvHazard':
+        final v = source['hasEnvHazard'];
+        if (v == null) return '';
+        return (v == true || v == 'true') ? 'Yes' : 'No';
+      case 'hasHumanInduced':
+        final v = source['hasHumanInduced'];
+        if (v == null) return '';
+        return (v == true || v == 'true') ? 'Yes' : 'No';
       default:
         return _stringifyValue(source[key]);
     }
@@ -1333,21 +1357,20 @@ class _DynamicRecordFields extends StatelessWidget {
             _FieldDef('Training', 'trainingsSummary'),
           ]),
         ];
-      default:
-        final poultryFields = [
+      default: // poultry
+        final poultryInfoFields = <_FieldDef>[
           const _FieldDef('Breed', 'breed'),
-          const _FieldDef('Stocks Received', 'stocksReceived'),
-          const _FieldDef('Date Received', 'dateReceived'),
-          const _FieldDef('Age Upon Receipt', 'ageUponReceipt'),
-          const _FieldDef('Avg Weight Upon Receipt', 'avgWeightUponReceipt'),
-          const _FieldDef('Housing Type', 'housingType'),
+          const _FieldDef('Inputs Received from Program', 'inputsReceived'),
+          const _FieldDef('Inputs Purchased by FCA', 'inputsPurchased'),
+          const _FieldDef('Farmgate Price per Unit', 'farmgatePrices'),
         ];
         if (!isCollective) {
-          poultryFields.insert(
+          poultryInfoFields.insert(
               0, const _FieldDef('Name of Farmer', 'memberName'));
         }
 
         return [
+          // ── Step 01: Project Background ──────────────────────────
           const _SectionDef('Project Background', [
             _FieldDef('Reporting Period', 'reportingPeriod'),
             _FieldDef('FCA Name', 'fcaName'),
@@ -1359,15 +1382,93 @@ class _DynamicRecordFields extends StatelessWidget {
             _FieldDef('Primary Intervention', 'primaryIntervention'),
             _FieldDef('Support Interventions', 'supportInterventions'),
           ]),
-          _SectionDef('Poultry Information', poultryFields),
+
+          // ── Step 02: Poultry Information ─────────────────────────
+          _SectionDef('Poultry Information', poultryInfoFields),
+
+          // ── Step 03: Production Information ─────────────────────
           const _SectionDef('Production Information', [
+            // Basic production
+            _FieldDef('Stocks Received', 'stocksReceived'),
+            _FieldDef('Date Received', 'dateReceived'),
+            _FieldDef('Age Upon Receipt', 'ageUponReceipt'),
+            _FieldDef('Avg Weight Upon Receipt', 'avgWeightUponReceipt'),
+            _FieldDef('Total Productive Cycle', 'totalProductiveCycle'),
+            // Housing & land
+            _FieldDef('Housing Type', 'housingType'),
+            _FieldDef('Land Ownership', 'landOwnership'),
+            _FieldDef('Land Ownership Other', 'landOwnershipOther'),
+            _FieldDef('Usufruct Agreement', 'usufruct'),
+            // Breeding fields
+            _FieldDef('Male to Female Ratio', 'maleToFemaleRatio'),
+            _FieldDef('Eggs Produced', 'eggsProduced'),
+            _FieldDef('Fertile Eggs', 'fertilEggs'),
+            _FieldDef('Eggs Incubated', 'eggsIncubated'),
+            _FieldDef('Eggs Hatched', 'eggsHatched'),
+            _FieldDef('Hatching Rate', 'hatchingRate'),
+            _FieldDef('Mortalities After Hatch', 'mortalitiesAfterHatch'),
+            _FieldDef('Chicks Sold', 'chicksSold'),
+            _FieldDef('Ranging Age', 'rangingAge'),
+            // Broiler / Meat fields
             _FieldDef('Harvested Birds', 'harvestedBirds'),
             _FieldDef('Total Weight Harvested', 'totalWeightHarvested'),
+            _FieldDef('Avg Daily Gain', 'avgDailyGain'),
+            _FieldDef('Harvest Recovery', 'harvestRecovery'),
+            _FieldDef('Avg Live Weight', 'avgLiveWeight'),
+            _FieldDef('Feed Conversion Ratio', 'feedConversionRatio'),
+            _FieldDef('Avg Age Harvested', 'avgAgeHarvested'),
+            _FieldDef('Broiler Performance Index', 'broilerPerformanceIndex'),
+            // Layer / Egg fields
+            _FieldDef('Eggs Sold', 'eggsSold'),
             _FieldDef('Total Eggs Harvested', 'totalEggsHarvested'),
+            _FieldDef('Avg Harvest Rate', 'avgHarvestRate'),
+            _FieldDef(
+                'Weekly Hen Day Egg Production', 'weeklyHenDayEggProduction'),
+            _FieldDef('Days Under Molting', 'daysUnderMolting'),
+          ]),
+
+          // ── Step 04: Mortality Information ───────────────────────
+          const _SectionDef('Mortality Information', [
+            _FieldDef('Has Pest', 'hasPest'),
+            _FieldDef('Pest Occurrence', 'pestOccurrence'),
+            _FieldDef('Pest Date', 'pestDate'),
+            _FieldDef('Pest Mortality', 'pestMortality'),
+            _FieldDef('Has Disease', 'hasDisease'),
+            _FieldDef('Disease Occurrence', 'diseaseOccurrence'),
+            _FieldDef('Disease Date', 'diseaseDate'),
+            _FieldDef('Disease Mortality', 'diseaseMortality'),
+            _FieldDef('Has Environmental Hazard', 'hasEnvHazard'),
+            _FieldDef('Env Occurrence', 'envOccurrence'),
+            _FieldDef('Env Date', 'envDate'),
+            _FieldDef('Env Mortality', 'envMortality'),
+            _FieldDef('Has Human-Induced', 'hasHumanInduced'),
+            _FieldDef('Human Occurrence', 'humanOccurrence'),
+            _FieldDef('Human Date', 'humanDate'),
+            _FieldDef('Human Mortality', 'humanMortality'),
+            _FieldDef('Treatment', 'treatment'),
+            _FieldDef('Attached Report', 'attachedReport'),
+            _FieldDef('Total Mortalities', 'totalMortalities'),
+            _FieldDef('Rejects / Culled', 'rejectsCulled'),
+            _FieldDef('Remaining Stocks', 'remainingStocks'),
+          ]),
+
+          // ── Step 05: Feeding & Water Management ──────────────────
+          const _SectionDef('Feeding & Water Management', [
             _FieldDef('Feed Type', 'feedType'),
             _FieldDef('Total Feed Consumed', 'totalFeedConsumed'),
-            _FieldDef('Sacks Manure Produced', 'sacksManureProduced'),
+            _FieldDef('Feed Per Day', 'feedPerDay'),
+            _FieldDef('Water Sources', 'waterSources'),
           ]),
+
+          // ── Step 06: Waste Management ────────────────────────────
+          const _SectionDef('Waste Management', [
+            _FieldDef('Sacks Manure Produced', 'sacksManureProduced'),
+            _FieldDef('Sacks Manure Sold', 'sacksManureSold'),
+            _FieldDef('Sacks Manure Used', 'sacksManureUsed'),
+            _FieldDef('Manure Price per Sack', 'manurePricePerSack'),
+          ]),
+
+          // ── Step 07: Trainings Attended ──────────────────────────
           const _SectionDef('Trainings Attended', [
             _FieldDef('Training', 'trainingsSummary'),
           ]),

@@ -70,6 +70,61 @@ class _Step3State extends State<PoultryStep3ProductionInformation> {
   @override
   void initState() {
     super.initState();
+
+    // ✅ CRITICAL: For collective viewing, load first commodity's data into wrapper
+    if (w.implementationType?.toLowerCase() == 'collective' &&
+        w.completedCommodities.isNotEmpty) {
+      final firstCommodity =
+          w.completedCommodities.first as Map<String, dynamic>;
+      w.stocksReceived =
+          (firstCommodity['stocksReceived'] as String? ?? '').trim();
+      w.dateReceived = (firstCommodity['dateReceived'] as String? ?? '').trim();
+      w.ageUponReceipt =
+          (firstCommodity['ageUponReceipt'] as String? ?? '').trim();
+      w.avgWeightUponReceipt =
+          (firstCommodity['avgWeightUponReceipt'] as String? ?? '').trim();
+      w.totalProductiveCycle =
+          (firstCommodity['totalProductiveCycle'] as String? ?? '').trim();
+      w.housingType = (firstCommodity['housingType'] as String?);
+      w.landOwnership = (firstCommodity['landOwnership'] as String?);
+      w.landOwnershipOther =
+          (firstCommodity['landOwnershipOther'] as String? ?? '').trim();
+      w.usufruct = (firstCommodity['usufruct'] as String?);
+      w.maleToFemaleRatio =
+          (firstCommodity['maleToFemaleRatio'] as String? ?? '').trim();
+      w.eggsProduced = (firstCommodity['eggsProduced'] as String? ?? '').trim();
+      w.fertilEggs = (firstCommodity['fertilEggs'] as String? ?? '').trim();
+      w.eggsIncubated =
+          (firstCommodity['eggsIncubated'] as String? ?? '').trim();
+      w.eggsHatched = (firstCommodity['eggsHatched'] as String? ?? '').trim();
+      w.hatchingRate = (firstCommodity['hatchingRate'] as String? ?? '').trim();
+      w.mortalitiesAfterHatch =
+          (firstCommodity['mortalitiesAfterHatch'] as String? ?? '').trim();
+      w.eggsSold = (firstCommodity['eggsSold'] as String? ?? '').trim();
+      w.harvestedBirds =
+          (firstCommodity['harvestedBirds'] as String? ?? '').trim();
+      w.totalWeightHarvested =
+          (firstCommodity['totalWeightHarvested'] as String? ?? '').trim();
+      w.avgDailyGain = (firstCommodity['avgDailyGain'] as String? ?? '').trim();
+      w.harvestRecovery =
+          (firstCommodity['harvestRecovery'] as String? ?? '').trim();
+      w.avgLiveWeight =
+          (firstCommodity['avgLiveWeight'] as String? ?? '').trim();
+      w.feedConversionRatio =
+          (firstCommodity['feedConversionRatio'] as String? ?? '').trim();
+      w.avgAgeHarvested =
+          (firstCommodity['avgAgeHarvested'] as String? ?? '').trim();
+      w.broilerPerformanceIndex =
+          (firstCommodity['broilerPerformanceIndex'] as String? ?? '').trim();
+      w.rangingAge = (firstCommodity['rangingAge'] as String? ?? '').trim();
+      w.totalEggsHarvested =
+          (firstCommodity['totalEggsHarvested'] as String? ?? '').trim();
+      w.avgHarvestRate =
+          (firstCommodity['avgHarvestRate'] as String? ?? '').trim();
+      print(
+          '✅ COLLECTIVE POULTRY VIEWING: Loaded production data from first commodity');
+    }
+
     _stocksReceived = w.stocksReceived;
     _dateReceived = w.dateReceived;
     _ageUponReceipt = w.ageUponReceipt;
@@ -355,7 +410,9 @@ class _Step3State extends State<PoultryStep3ProductionInformation> {
               color: DAColors.textDark)),
       const SizedBox(height: 24),
 
-      // ── Common fields ────────────────────────────────────────
+      // ── SECTION 1: Basic Production Information ─────────────────────────────────────
+      _lbl('Basic Production Information'),
+      const SizedBox(height: 16),
       CropField(
           label: 'Number of stocks',
           hint: 'Enter',
